@@ -4,7 +4,7 @@
 
 const CONFIG = {
   // ► STEP 1: Paste your Apps Script Web App URL here
-  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbxbh0N1kaFYOhfSc-yOTQuhkz_K-yUVSwOC5HtaVFoybqrSn_AKTxZMeoraB0_rP7Eb/exec',
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbzmn063QGJNj3K60K3ZOjdR1Sr96CnfJ3PPuDKkdOOKZG2ry0U_XmX68LlGkOwOw2L1/exec',
 
   // ► STEP 2: Set to false once your Sheet is connected
   DEMO_MODE: false,
