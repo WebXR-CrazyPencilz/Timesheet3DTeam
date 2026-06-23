@@ -109,14 +109,13 @@ async function apiSaveSlot(entry) {
     return { saved: true, history: null }; // null = caller must fetch history separately
   }
 
-  // Single round-trip: save + get fresh history together
+  // Single call to save the slot
   const result = await sheetGET({
-    action: 'saveAndHistory',
+    action: 'saveSlot',
     data:   encodeURIComponent(JSON.stringify(entry)),
   });
-  console.log('[API] Sheet saveAndHistory result: saved=', result.saved,
-              '| history entries:', result.history?.length);
-  return result; // { saved: true, action: 'inserted'|'updated', history: [...] }
+  console.log('[API] Sheet save result:', result);
+  return { saved: result.saved, history: null }; // null = caller fetches history separately
 }
 
 // ── GET HISTORY ───────────────────────────────────
