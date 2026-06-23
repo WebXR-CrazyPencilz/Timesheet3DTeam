@@ -277,7 +277,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Layout','Exterior','Interior'].map(t =>
+            ${['Layout','Exterior','Interior', 'Web Development'].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
