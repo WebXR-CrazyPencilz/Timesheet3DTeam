@@ -22,9 +22,9 @@ let CURRENT_DATE = '';   // YYYY-MM-DD
 const MAX_ENTRIES_PER_SLOT = 4;
 
 const SLOT_META = {
-  morning:   { label: 'Morning',   icon: '🌅', defaultIn: '09:30', defaultOut: '13:00', minTime: '09:30', maxTime: '13:00', color: '#f59e0b' },
-  afternoon: { label: 'Afternoon', icon: '☀️',  defaultIn: '13:45', defaultOut: '19:30', minTime: '13:30', maxTime: '20:00', color: '#3b82f6' },
-  extended:  { label: 'Extended',  icon: '🌙', defaultIn: '19:30', defaultOut: '22:00', minTime: '19:00', maxTime: '22:30', color: '#8b5cf6' },
+  morning:   { label: 'Morning',   icon: '🌅', defaultIn: '09:30', defaultOut: '13:00', minTime: '08:30', maxTime: '13:00', displayMin: '09:30', color: '#f59e0b' },
+  afternoon: { label: 'Afternoon', icon: '☀️',  defaultIn: '13:45', defaultOut: '19:30', minTime: '13:30', maxTime: '20:00', displayMin: '13:45', color: '#3b82f6' },
+  extended:  { label: 'Extended',  icon: '🌙', defaultIn: '19:30', defaultOut: '22:00', minTime: '19:00', maxTime: '22:30', displayMin: '19:30', color: '#8b5cf6' },
 };
 
 // ── INIT ──────────────────────────────────────────
@@ -231,14 +231,14 @@ function renderEntryRow(slotKey, entryNum, entry) {
       <div class="fg">
         <label class="flabel">Time In</label>
         <input type="time" class="fc time-inp" id="tin-${id}" value="${timeIn}"
-          min="${meta.minTime}" max="${meta.maxTime}"
+          min="${meta.displayMin}" max="${meta.maxTime}"
           onchange="calcHours('${id}')" />
       </div>
       <div class="time-arrow">→</div>
       <div class="fg">
         <label class="flabel">Time Out</label>
         <input type="time" class="fc time-inp" id="tout-${id}" value="${timeOut}"
-          min="${meta.minTime}" max="${meta.maxTime}"
+          min="${meta.displayMin}" max="${meta.maxTime}"
           onchange="calcHours('${id}')" />
       </div>
       <div class="fg hours-display">
@@ -246,7 +246,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="hours-badge" id="hrs-${id}">${hours ? hours + 'h' : '—'}</div>
       </div>
     </div>
-    <div class="slot-time-hint">Allowed range: ${meta.minTime} – ${meta.maxTime}</div>
+    <div class="slot-time-hint">Allowed range: ${meta.displayMin} – ${meta.maxTime}</div>
 
     <!-- Client / Project / Task -->
     <div class="frow">
@@ -277,7 +277,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Layout','Exterior','Interior', 'Web Development'].map(t =>
+            ${['Layout','Exterior','Interior'].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
@@ -293,7 +293,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         placeholder="What did you work on? (min ${MIN_NOTES_LENGTH} characters)" maxlength="300"
         oninput="updateNotesCount('${id}')">${notes}</textarea>
       <div class="tafoot">
-        <span class="cc" id="cc-${id}">${notes.length}/50 min</span>
+        <span class="cc" id="cc-${id}">${notes.length >= MIN_NOTES_LENGTH ? `${notes.length}/300` : `${notes.length}/${MIN_NOTES_LENGTH} minimum`}</span>
       </div>
     </div>
 
@@ -419,7 +419,7 @@ function updateNotesCount(id) {
   const len = ta.value.trim().length;
   cc.textContent = len >= MIN_NOTES_LENGTH
     ? `${len}/300`
-    : `${len}/${MIN_NOTES_LENGTH} min`;
+    : `${len}/${MIN_NOTES_LENGTH} minimum`;
   cc.style.color = len >= MIN_NOTES_LENGTH ? 'var(--ok)' : 'var(--err)';
   ta.classList.toggle('bad', false); // clear red border while typing
 }
@@ -501,12 +501,12 @@ async function saveEntry(id, slotKey, entryNum) {
   const outM  = toMinutes(tout.value);
 
   if (inM < minM || inM > maxM) {
-    toast('e', 'Time In out of range', `${meta.label} allows ${meta.minTime}–${meta.maxTime}`);
+    toast('e', 'Time In out of range', `${meta.label} allows ${meta.displayMin}–${meta.maxTime}`);
     tin.classList.add('bad');
     return;
   }
   if (outM < minM || outM > maxM) {
-    toast('e', 'Time Out out of range', `${meta.label} allows ${meta.minTime}–${meta.maxTime}`);
+    toast('e', 'Time Out out of range', `${meta.label} allows ${meta.displayMin}–${meta.maxTime}`);
     tout.classList.add('bad');
     return;
   }
