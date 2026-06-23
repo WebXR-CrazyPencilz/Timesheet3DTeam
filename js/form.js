@@ -439,10 +439,12 @@ async function markLeave(id, slotKey, entryNum) {
 
   const btn = $(`savebtn-${id}`);
   if (btn) { btn.classList.add('ld'); btn.disabled = true; }
+  toast('i', 'Marking Leave…', 'Please wait', 18000);
 
   try {
-    await apiSaveSlot(entry);
+    const result = await apiSaveSlot(entry);
 
+    // Update local DAY_ENTRIES state
     DAY_ENTRIES[slotKey] = DAY_ENTRIES[slotKey] || [];
     const idx = DAY_ENTRIES[slotKey].findIndex(e => e.entryNum === entryNum);
     if (idx >= 0) DAY_ENTRIES[slotKey][idx] = entry;
@@ -450,11 +452,16 @@ async function markLeave(id, slotKey, entryNum) {
 
     reRenderRow(id, slotKey, entryNum, entry);
 
-    ENTRIES = await apiGetHistory(USER.id);
-    refreshStats(); refreshFilters(); refreshTable(); refreshChart();
+    // Use history returned inline from saveAndHistory (one round-trip)
+    // Fall back to separate fetch only in DEMO_MODE where result.history is null
+    if (result.history) {
+      ENTRIES = result.history;
+    } else {
+      ENTRIES = await apiGetHistory(USER.id);
+    }
 
+    refreshStats(); refreshFilters(); refreshTable(); refreshChart();
     toast('i', 'Marked as Leave', `${SLOT_META[slotKey].label} slot ${entryNum}`);
-  } catch(e) {
     toast('e', 'Failed', e.message);
   } finally {
     if (btn) { btn.classList.remove('ld'); btn.disabled = false; }
@@ -533,8 +540,9 @@ async function saveEntry(id, slotKey, entryNum) {
   const entry = buildEntry(id, slotKey, entryNum, 'Worked');
 
   if (btn) { btn.classList.add('ld'); btn.disabled = true; }
+  toast('i', 'Saving…', 'Please wait', 18000); // dismissed by success/error toast
   try {
-    await apiSaveSlot(entry);
+    const result = await apiSaveSlot(entry);
 
     DAY_ENTRIES[slotKey] = DAY_ENTRIES[slotKey] || [];
     const idx = DAY_ENTRIES[slotKey].findIndex(e => e.entryNum === entryNum);
@@ -543,9 +551,15 @@ async function saveEntry(id, slotKey, entryNum) {
 
     reRenderRow(id, slotKey, entryNum, entry);
 
-    ENTRIES = await apiGetHistory(USER.id);
-    refreshStats(); refreshFilters(); refreshTable(); refreshChart();
+    // Use history returned inline from saveAndHistory (one round-trip)
+    // Fall back to separate fetch only in DEMO_MODE where result.history is null
+    if (result.history) {
+      ENTRIES = result.history;
+    } else {
+      ENTRIES = await apiGetHistory(USER.id);
+    }
 
+    refreshStats(); refreshFilters(); refreshTable(); refreshChart();
     toast('s', 'Saved!', `${SLOT_META[slotKey].label} entry ${entryNum}`);
   } catch(e) {
     toast('e', 'Save failed', e.message);

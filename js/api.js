@@ -1,35 +1,52 @@
 // ═══════════════════════════════════════════════════
-// API.JS — with temporary console debug logs
-// Remove the console.log lines once everything works
+// API.JS — optimized for Apps Script cold starts
+//
+// Key changes:
+//   1. sheetGET has a 12s timeout + 1 automatic retry
+//      so cold starts don't silently fail
+//   2. apiSaveSlot now calls action:'saveAndHistory'
+//      which saves + returns history in ONE round-trip
+//      instead of two separate GET calls
+//   3. Console debug logs kept for now — remove later
 // ═══════════════════════════════════════════════════
 
 const LS_E = 'tt_entries';
 
-// ── SHARED GET HELPER ─────────────────────────────
-async function sheetGET(params) {
+// ── SHARED GET HELPER (with timeout + retry) ───────
+async function sheetGET(params, attempt = 1) {
   const url = new URL(CONFIG.SHEETS_URL);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  console.log('[API] GET →', params.action, '| URL:', url.toString());
+  console.log('[API] GET →', params.action, attempt > 1 ? `(retry #${attempt})` : '');
 
-  const res  = await fetch(url.toString());
-  const json = await res.json();
+  // 15s timeout — long enough for cold start, short enough to fail fast
+  const controller = new AbortController();
+  const timeout    = setTimeout(() => controller.abort(), 15000);
 
-  console.log('[API] ←', params.action, '| response:', json);
-
-  if (json.status !== 'ok') throw new Error(json.message || 'Request failed');
-  return json.data;
+  try {
+    const res  = await fetch(url.toString(), { signal: controller.signal });
+    clearTimeout(timeout);
+    const json = await res.json();
+    console.log('[API] ←', params.action, '| status:', json.status);
+    if (json.status !== 'ok') throw new Error(json.message || 'Request failed');
+    return json.data;
+  } catch(err) {
+    clearTimeout(timeout);
+    // Retry once on timeout or network error (covers cold start)
+    if (attempt === 1 && (err.name === 'AbortError' || err.message.includes('fetch'))) {
+      console.warn('[API] Timeout/network error on', params.action, '— retrying...');
+      return sheetGET(params, 2);
+    }
+    throw err;
+  }
 }
 
 // ── MASTER DATA ───────────────────────────────────
 async function apiGetMasterData() {
   console.log('[API] apiGetMasterData | DEMO_MODE:', CONFIG.DEMO_MODE);
-
   if (CONFIG.DEMO_MODE) {
-    console.log('[API] Using data.js — employees:', EMPLOYEES.length);
     return { employees: EMPLOYEES, clients: CLIENTS, projects: PROJECTS };
   }
-
   const data = await sheetGET({ action: 'getMasterData' });
   console.log('[API] Sheet employees:', data.employees?.length,
               '| clients:', data.clients?.length,
@@ -40,15 +57,12 @@ async function apiGetMasterData() {
 // ── AUTH ──────────────────────────────────────────
 async function apiLogin(employeeId, password) {
   console.log('[API] apiLogin | id:', employeeId, '| DEMO_MODE:', CONFIG.DEMO_MODE);
-
   if (CONFIG.DEMO_MODE) {
     const emp = EMPLOYEES.find(e => e.id === employeeId);
     if (!emp)                throw new Error('Employee not found.');
     if (emp.pw !== password) throw new Error('Wrong password.');
-    console.log('[API] Demo login OK:', emp.name);
     return { id: emp.id, name: emp.name, team: emp.team };
   }
-
   const data = await sheetGET({ action: 'login', uid: employeeId, pw: password });
   console.log('[API] Sheet login OK:', data);
   return data;
@@ -57,11 +71,9 @@ async function apiLogin(employeeId, password) {
 // ── GET DAY SLOTS ─────────────────────────────────
 async function apiGetDaySlots(uid, date) {
   console.log('[API] apiGetDaySlots | uid:', uid, '| date:', date);
-
   if (CONFIG.DEMO_MODE) {
     const all     = JSON.parse(localStorage.getItem(LS_E) || '[]');
     const entries = all.filter(e => e.uid === uid && e.date === date);
-    console.log('[API] Demo slots found:', entries.length);
     return {
       date,
       slots: {
@@ -72,11 +84,13 @@ async function apiGetDaySlots(uid, date) {
       entries,
     };
   }
-
   return sheetGET({ action: 'getDaySlots', uid, date });
 }
 
 // ── SAVE SLOT ─────────────────────────────────────
+// In live mode, calls 'saveAndHistory' which saves the slot
+// AND returns fresh history in a single round-trip, halving
+// the number of Apps Script cold-start hits per save.
 async function apiSaveSlot(entry) {
   console.log('[API] apiSaveSlot | slot:', entry.slot,
               '| entry#:', entry.entryNum,
@@ -91,16 +105,18 @@ async function apiSaveSlot(entry) {
     );
     filtered.unshift(entry);
     localStorage.setItem(LS_E, JSON.stringify(filtered.slice(0, 5000)));
-    console.log('[API] Demo save OK — localStorage entries:', filtered.length);
-    return { ok: true };
+    console.log('[API] Demo save OK');
+    return { saved: true, history: null }; // null = caller must fetch history separately
   }
 
+  // Single round-trip: save + get fresh history together
   const result = await sheetGET({
-    action: 'saveSlot',
+    action: 'saveAndHistory',
     data:   encodeURIComponent(JSON.stringify(entry)),
   });
-  console.log('[API] Sheet save result:', result);
-  return result;
+  console.log('[API] Sheet saveAndHistory result: saved=', result.saved,
+              '| history entries:', result.history?.length);
+  return result; // { saved: true, action: 'inserted'|'updated', history: [...] }
 }
 
 // ── GET HISTORY ───────────────────────────────────
@@ -129,7 +145,7 @@ async function apiGetHistory(uid) {
     return result;
   }
 
-  const data = await sheetGET({ action: 'getHistory', uid });
+  const data   = await sheetGET({ action: 'getHistory', uid });
   const result = safeSort(Array.isArray(data) ? data : []);
   console.log('[API] Sheet history — entries:', result.length);
   return result;
