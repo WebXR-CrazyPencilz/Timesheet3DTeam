@@ -24,7 +24,7 @@ const MAX_ENTRIES_PER_SLOT = 4;
 const SLOT_META = {
   morning:   { label: 'Morning',   icon: '🌅', defaultIn: '09:30', defaultOut: '13:00', minTime: '08:30', maxTime: '13:00', displayMin: '09:30', color: '#f59e0b' },
   afternoon: { label: 'Afternoon', icon: '☀️',  defaultIn: '13:45', defaultOut: '19:30', minTime: '13:30', maxTime: '20:00', displayMin: '13:45', color: '#3b82f6' },
-  extended:  { label: 'Extended',  icon: '🌙', defaultIn: '19:30', defaultOut: '22:00', minTime: '19:00', maxTime: '22:30', displayMin: '19:30', color: '#8b5cf6' },
+  extended:  { label: 'Extended',  icon: '🌙', defaultIn: '19:30', defaultOut: '22:00', minTime: '19:00', maxTime: '23:59', displayMin: '19:30', color: '#8b5cf6' },
 };
 
 // ── INIT ──────────────────────────────────────────
@@ -36,7 +36,7 @@ function initForm() {
 
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
-// 0 = today, 1 = yesterday, 2 = day before yesterday, 3 = and the previous day .
+// 0 = today, 1 = yesterday, 2 = day before yesterday.
 const MAX_DAYS_BACK = 3;
 
 function renderDateNav() {
@@ -277,7 +277,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Layout','Exterior','Interior', 'Web Development'].map(t =>
+            ${['Layout','Exterior','Interior'].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
@@ -613,7 +613,13 @@ function buildEntry(id, slotKey, entryNum, status) {
 }
 
 function buildEntryBase(slotKey, entryNum) {
-  const d = new Date(CURRENT_DATE + 'T00:00:00');
+  const d   = new Date(CURRENT_DATE + 'T00:00:00');
+  const now = new Date();
+  // savedAt: exact moment the user hit Save — stored as ISO string
+  const savedAt = now.toLocaleString('en-IN', {
+    day:'2-digit', month:'short', year:'numeric',
+    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:true
+  });
   return {
     id:      `${USER.id}-${CURRENT_DATE}-${slotKey}-${entryNum}`,
     uid:     USER.id,
@@ -622,6 +628,7 @@ function buildEntryBase(slotKey, entryNum) {
     day:     d.toLocaleDateString('en-IN', { weekday:'long' }),
     slot:    slotKey,
     entryNum,
+    savedAt, // e.g. "23 Jun 2026, 04:15:32 pm"
   };
 }
 

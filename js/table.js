@@ -89,7 +89,7 @@ function renderPage() {
     const isLeave = e.status === 'Leave';
     return `<tr class="${isLeave?'leave-row':''}">
       <td class="rn">${(tPage-1)*PAGE+i+1}</td>
-      <td class="dcell">${fmtDate(e.date)}<br><span style="font-size:.6rem;color:var(--muted)">${e.day||''}</span></td>
+      <td class="dcell">${fmtDate(e.date)}<br><span style="font-size:.6rem;color:var(--muted)">${e.day||''}</span>${e.savedAt ? `<br><span style="font-size:.58rem;color:var(--muted);font-style:italic" title="Saved at ${e.savedAt}">🕐 ${e.savedAt}</span>` : ''}</td>
       <td><span class="slot-pill slot-${e.slot}">${slotIcon[e.slot]||''} ${slotLabel[e.slot]||e.slot} #${e.entryNum}</span></td>
       <td class="dcell">${e.timeIn||'—'}</td>
       <td class="dcell">${e.timeOut||'—'}</td>
@@ -178,7 +178,7 @@ function initTable() {
   $('xbtn')?.addEventListener('click', () => {
     const rows = getFiltered().slice().sort((a,b) => b.date.localeCompare(a.date));
     const hdr  = ['Date','Day','Slot','Entry#','Time In','Time Out','Hours',
-                  'Client','Project','Task','Notes','Status'];
+                  'Client','Project','Task','Notes','Status','Saved At'];
     const lines = rows.map(e => [
       e.date, e.day||'', e.slot, e.entryNum,
       e.timeIn, e.timeOut, e.hours,
@@ -187,6 +187,7 @@ function initTable() {
       e.task,
       `"${(e.notes||'').replace(/"/g,'""')}"`,
       e.status,
+      `"${(e.savedAt||'').replace(/"/g,'""')}"`,
     ].join(','));
     const csv = [hdr, ...lines].join('\n');
     const a   = document.createElement('a');
