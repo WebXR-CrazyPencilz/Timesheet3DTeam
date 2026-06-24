@@ -7,6 +7,16 @@
 let tData = [], tSort = { col:'date', dir:-1 }, tPage = 1;
 const PAGE = CONFIG.PAGE_SIZE;
 
+// Converts decimal hours to "1h 6m" display format
+function fmtHrsMin(h) {
+  const totalMins = Math.round(Number(h) * 60);
+  const hrs  = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hrs === 0)  return `${mins}m`;
+  if (mins === 0) return `${hrs}h`;
+  return `${hrs}h ${mins}m`;
+}
+
 // ── STATS ─────────────────────────────────────────
 function refreshStats() {
   const tod = todayStr(), ws = weekStart(), mo = todayStr().slice(0,7);
@@ -96,7 +106,7 @@ function renderPage() {
       <td>${isLeave ? '<span class="leave-badge-sm">🏖️ Leave</span>' : esc(e.client)}</td>
       <td>${isLeave ? '—' : esc(e.project)}</td>
       <td>${isLeave ? '—' : `<span class="tpill">${esc(e.task)}</span>`}</td>
-      <td class="hcell">${isLeave ? '—' : (e.hours ? e.hours+'h' : '—')}</td>
+      <td class="hcell">${isLeave ? '—' : (e.hours ? fmtHrsMin(e.hours) : '—')}</td>
       <td class="ncell" title="${esc(e.notes)}">${isLeave ? '—' : esc(e.notes)}</td>
     </tr>`;
   }).join('');
@@ -108,7 +118,7 @@ function renderPage() {
       <td colspan="7" style="font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">
         Page / All filtered (worked hours only)
       </td>
-      <td class="hcell">${pageHours}h / ${totalHours}h</td>
+      <td class="hcell">${fmtHrsMin(pageHours)} / ${fmtHrsMin(totalHours)}</td>
       <td></td>
     </tr>`;
   }

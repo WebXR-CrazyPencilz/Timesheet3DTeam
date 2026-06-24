@@ -24,9 +24,12 @@ function fmtDate(s) {
 }
 
 function fh(h) {
-  // Show exact hours — round to 2 decimal places, trim trailing zeros
-  const val = Math.round(Number(h) * 100) / 100;
-  return val % 1 === 0 ? `${val}h` : `${val}h`;
+  const totalMins = Math.round(Number(h) * 60);
+  const hrs  = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hrs === 0)  return `${mins}m`;
+  if (mins === 0) return `${hrs}h`;
+  return `${hrs}h ${mins}m`;
 }
 
 function esc(s) {

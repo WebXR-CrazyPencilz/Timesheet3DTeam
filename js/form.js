@@ -243,7 +243,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
       </div>
       <div class="fg hours-display">
         <label class="flabel">Hours</label>
-        <div class="hours-badge" id="hrs-${id}">${hours ? hours + 'h' : '—'}</div>
+        <div class="hours-badge" id="hrs-${id}">${hours ? fmtHoursDisplay(hours) : '—'}</div>
       </div>
     </div>
     <div class="slot-time-hint">Allowed range: ${meta.displayMin} – ${meta.maxTime}</div>
@@ -405,8 +405,10 @@ function calcHours(id) {
   const [oh, om] = tout.split(':').map(Number);
   const mins = (oh * 60 + om) - (ih * 60 + im);
   if (mins <= 0) { hrsEl.textContent = '—'; return; }
-  const h = Math.round((mins / 60) * 100) / 100; // exact to 2 decimal places e.g. 3.47
-  hrsEl.textContent = `${h}h`;
+  const h    = Math.round((mins / 60) * 100) / 100;
+  const hh   = Math.floor(mins / 60);
+  const mm   = mins % 60;
+  hrsEl.textContent = hh === 0 ? `${mm}m` : mm === 0 ? `${hh}h` : `${hh}h ${mm}m`;
 }
 
 // ── NOTES CHARACTER COUNT ─────────────────────────
@@ -635,4 +637,14 @@ function buildEntryBase(slotKey, entryNum) {
 // ── HELPERS ───────────────────────────────────────
 function fmtDateObj(d) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+// Converts a decimal hours value to "1h 6m" format for display
+function fmtHoursDisplay(h) {
+  const totalMins = Math.round(Number(h) * 60);
+  const hrs  = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hrs === 0)  return `${mins}m`;
+  if (mins === 0) return `${hrs}h`;
+  return `${hrs}h ${mins}m`;
 }
