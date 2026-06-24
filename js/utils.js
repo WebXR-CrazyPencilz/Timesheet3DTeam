@@ -23,7 +23,11 @@ function fmtDate(s) {
     { day:'numeric', month:'short', year:'numeric' });
 }
 
-function fh(h) { return `${h}h`; }
+function fh(h) {
+  // Show exact hours — round to 2 decimal places, trim trailing zeros
+  const val = Math.round(Number(h) * 100) / 100;
+  return val % 1 === 0 ? `${val}h` : `${val}h`;
+}
 
 function esc(s) {
   return String(s || '—')

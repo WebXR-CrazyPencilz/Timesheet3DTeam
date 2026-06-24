@@ -37,7 +37,7 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 3;
+const MAX_DAYS_BACK = 2;
 
 function renderDateNav() {
   const nav = $('dateNav');
@@ -405,7 +405,7 @@ function calcHours(id) {
   const [oh, om] = tout.split(':').map(Number);
   const mins = (oh * 60 + om) - (ih * 60 + im);
   if (mins <= 0) { hrsEl.textContent = '—'; return; }
-  const h = Math.round((mins / 60) * 2) / 2;
+  const h = Math.round((mins / 60) * 100) / 100; // exact to 2 decimal places e.g. 3.47
   hrsEl.textContent = `${h}h`;
 }
 
@@ -591,7 +591,7 @@ function buildEntry(id, slotKey, entryNum, status) {
     const [ih, im] = tin.split(':').map(Number);
     const [oh, om] = tout.split(':').map(Number);
     const mins = (oh * 60 + om) - (ih * 60 + im);
-    if (mins > 0) hours = Math.round((mins / 60) * 2) / 2;
+    if (mins > 0) hours = Math.round((mins / 60) * 100) / 100;
   }
 
   const cOpt = csel?.options[csel.selectedIndex];
