@@ -1,13 +1,5 @@
 // ═══════════════════════════════════════════════════
 // API.JS — optimized for Apps Script cold starts
-//
-// Key changes:
-//   1. sheetGET has a 12s timeout + 1 automatic retry
-//      so cold starts don't silently fail
-//   2. apiSaveSlot now calls action:'saveAndHistory'
-//      which saves + returns history in ONE round-trip
-//      instead of two separate GET calls
-//   3. Console debug logs kept for now — remove later
 // ═══════════════════════════════════════════════════
 
 const LS_E = 'tt_entries';
@@ -19,7 +11,6 @@ async function sheetGET(params, attempt = 1) {
 
   console.log('[API] GET →', params.action, attempt > 1 ? `(retry #${attempt})` : '');
 
-  // 15s timeout — long enough for cold start, short enough to fail fast
   const controller = new AbortController();
   const timeout    = setTimeout(() => controller.abort(), 15000);
 
@@ -32,7 +23,6 @@ async function sheetGET(params, attempt = 1) {
     return json.data;
   } catch(err) {
     clearTimeout(timeout);
-    // Retry once on timeout or network error (covers cold start)
     if (attempt === 1 && (err.name === 'AbortError' || err.message.includes('fetch'))) {
       console.warn('[API] Timeout/network error on', params.action, '— retrying...');
       return sheetGET(params, 2);
@@ -43,34 +33,25 @@ async function sheetGET(params, attempt = 1) {
 
 // ── MASTER DATA ───────────────────────────────────
 async function apiGetMasterData() {
-  console.log('[API] apiGetMasterData | DEMO_MODE:', CONFIG.DEMO_MODE);
   if (CONFIG.DEMO_MODE) {
     return { employees: EMPLOYEES, clients: CLIENTS, projects: PROJECTS };
   }
-  const data = await sheetGET({ action: 'getMasterData' });
-  console.log('[API] Sheet employees:', data.employees?.length,
-              '| clients:', data.clients?.length,
-              '| projects:', data.projects?.length);
-  return data;
+  return sheetGET({ action: 'getMasterData' });
 }
 
 // ── AUTH ──────────────────────────────────────────
 async function apiLogin(employeeId, password) {
-  console.log('[API] apiLogin | id:', employeeId, '| DEMO_MODE:', CONFIG.DEMO_MODE);
   if (CONFIG.DEMO_MODE) {
     const emp = EMPLOYEES.find(e => e.id === employeeId);
     if (!emp)                throw new Error('Employee not found.');
     if (emp.pw !== password) throw new Error('Wrong password.');
     return { id: emp.id, name: emp.name, team: emp.team };
   }
-  const data = await sheetGET({ action: 'login', uid: employeeId, pw: password });
-  console.log('[API] Sheet login OK:', data);
-  return data;
+  return sheetGET({ action: 'login', uid: employeeId, pw: password });
 }
 
 // ── GET DAY SLOTS ─────────────────────────────────
 async function apiGetDaySlots(uid, date) {
-  console.log('[API] apiGetDaySlots | uid:', uid, '| date:', date);
   if (CONFIG.DEMO_MODE) {
     const all     = JSON.parse(localStorage.getItem(LS_E) || '[]');
     const entries = all.filter(e => e.uid === uid && e.date === date);
@@ -88,15 +69,7 @@ async function apiGetDaySlots(uid, date) {
 }
 
 // ── SAVE SLOT ─────────────────────────────────────
-// In live mode, calls 'saveAndHistory' which saves the slot
-// AND returns fresh history in a single round-trip, halving
-// the number of Apps Script cold-start hits per save.
 async function apiSaveSlot(entry) {
-  console.log('[API] apiSaveSlot | slot:', entry.slot,
-              '| entry#:', entry.entryNum,
-              '| date:', entry.date,
-              '| DEMO_MODE:', CONFIG.DEMO_MODE);
-
   if (CONFIG.DEMO_MODE) {
     const all      = JSON.parse(localStorage.getItem(LS_E) || '[]');
     const filtered = all.filter(e =>
@@ -105,23 +78,17 @@ async function apiSaveSlot(entry) {
     );
     filtered.unshift(entry);
     localStorage.setItem(LS_E, JSON.stringify(filtered.slice(0, 5000)));
-    console.log('[API] Demo save OK');
-    return { saved: true, history: null }; // null = caller must fetch history separately
+    return { saved: true, history: null };
   }
-
-  // Single call to save the slot
   const result = await sheetGET({
     action: 'saveSlot',
     data:   encodeURIComponent(JSON.stringify(entry)),
   });
-  console.log('[API] Sheet save result:', result);
-  return { saved: result.saved, history: null }; // null = caller fetches history separately
+  return { saved: result.saved, history: null };
 }
 
-// ── GET HISTORY ───────────────────────────────────
+// ── GET HISTORY (own entries — employee portal) ───
 async function apiGetHistory(uid) {
-  console.log('[API] apiGetHistory | uid:', uid);
-
   function safeSort(arr) {
     if (!Array.isArray(arr) || arr.length === 0) return [];
     return arr.sort((a, b) => {
@@ -135,19 +102,25 @@ async function apiGetHistory(uid) {
   }
 
   if (CONFIG.DEMO_MODE) {
-    const all     = JSON.parse(localStorage.getItem(LS_E) || '[]');
-    const mine    = all.filter(e => e.uid === uid);
-    const dates   = [...new Set(mine.map(e => e.date).filter(Boolean))].sort().reverse().slice(0, 10);
+    const all   = JSON.parse(localStorage.getItem(LS_E) || '[]');
+    const mine  = all.filter(e => e.uid === uid);
+    const dates = [...new Set(mine.map(e => e.date).filter(Boolean))].sort().reverse().slice(0, 10);
     const dateSet = new Set(dates);
-    const result  = safeSort(mine.filter(e => dateSet.has(e.date)));
-    console.log('[API] Demo history — entries:', result.length);
-    return result;
+    return safeSort(mine.filter(e => dateSet.has(e.date)));
   }
 
-  const data   = await sheetGET({ action: 'getHistory', uid });
-  const result = safeSort(Array.isArray(data) ? data : []);
-  console.log('[API] Sheet history — entries:', result.length);
-  return result;
+  const data = await sheetGET({ action: 'getHistory', uid });
+  return safeSort(Array.isArray(data) ? data : []);
+}
+
+// ── GET ALL HISTORY (manager portal — all entries) ─
+async function apiGetAllHistory(uid) {
+  if (CONFIG.DEMO_MODE) {
+    const all = JSON.parse(localStorage.getItem(LS_E) || '[]');
+    return all.filter(e => e.uid === uid);
+  }
+  const data = await sheetGET({ action: 'getAllHistory', uid });
+  return Array.isArray(data) ? data : [];
 }
 
 // ── LEGACY COMPAT ─────────────────────────────────
