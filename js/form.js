@@ -37,7 +37,7 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 2;
+const MAX_DAYS_BACK = 8;
 
 function renderDateNav() {
   const nav = $('dateNav');
@@ -171,7 +171,7 @@ function renderSlotBlock(slotKey) {
         </button>` : ''}
     </div>
     <div class="slot-entries" id="entries-${slotKey}">
-      ${rows.map((e, i) => renderEntryRow(slotKey, i + 1, e)).join('')}
+      ${rows.map((e, i) => renderEntryRow(slotKey, e?.entryNum ?? (i + 1), e)).join('')}
     </div>
   </div>`;
 }
@@ -355,8 +355,10 @@ function addEntry(slotKey) {
     toast('i', 'Max 4 entries per slot');
     return;
   }
-  const maxSaved = current.reduce((m, e) => Math.max(m, e.entryNum), 0);
-  const newNum   = maxSaved + 1;
+  const maxSaved   = current.reduce((m, e) => Math.max(m, e.entryNum), 0);
+  const domRows    = document.querySelectorAll(`#entries-${slotKey} .entry-row`);
+  const maxInDOM   = Math.max(maxSaved, domRows.length);
+  const newNum     = maxInDOM + 1;
 
   const container = $(`entries-${slotKey}`);
   if (!container) return;
@@ -446,7 +448,6 @@ async function markLeave(id, slotKey, entryNum) {
   try {
     const result = await apiSaveSlot(entry);
 
-    // Update local DAY_ENTRIES state
     DAY_ENTRIES[slotKey] = DAY_ENTRIES[slotKey] || [];
     const idx = DAY_ENTRIES[slotKey].findIndex(e => e.entryNum === entryNum);
     if (idx >= 0) DAY_ENTRIES[slotKey][idx] = entry;
@@ -454,8 +455,6 @@ async function markLeave(id, slotKey, entryNum) {
 
     reRenderRow(id, slotKey, entryNum, entry);
 
-    // Use history returned inline from saveAndHistory (one round-trip)
-    // Fall back to separate fetch only in DEMO_MODE where result.history is null
     if (result.history) {
       ENTRIES = result.history;
     } else {
@@ -464,7 +463,8 @@ async function markLeave(id, slotKey, entryNum) {
 
     refreshStats(); refreshFilters(); refreshTable(); refreshChart();
     toast('i', 'Marked as Leave', `${SLOT_META[slotKey].label} slot ${entryNum}`);
-    toast('e', 'Failed', e.message);
+  } catch(err) {
+    toast('e', 'Failed', err.message);
   } finally {
     if (btn) { btn.classList.remove('ld'); btn.disabled = false; }
   }

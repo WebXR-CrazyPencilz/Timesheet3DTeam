@@ -94,7 +94,13 @@ function rangeLabel() {
 }
 
 function fmtHours(h) {
-  return (Math.round(h * 10) / 10) + 'h';
+  if (!h || h <= 0) return '0h';
+  const totalMins = Math.round(h * 60);
+  const hrs  = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hrs === 0)  return mins + 'm';
+  if (mins === 0) return hrs + 'h';
+  return hrs + 'h ' + mins + 'm';
 }
 
 // ── BUILD SVG DONUT ────────────────────────────────
