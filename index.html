@@ -18,6 +18,7 @@
   --inp:#1a1d27; --inp-b:rgba(255,255,255,.11); --focus:rgba(79,142,247,.32);
   --sh:0 4px 24px rgba(0,0,0,.5); --sh-sm:0 1px 4px rgba(0,0,0,.4);
   --glow:0 0 28px rgba(79,142,247,.2);
+  --surface1:#13161e; --surface2:#1a1d27; --txt1:#eef0f6;
 }
 [data-theme="light"]{
   --bg:#f1f3f9; --surface:#fff; --elevated:#f7f8fc; --hover:#eef0f7;
@@ -28,6 +29,7 @@
   --inp:#fff; --inp-b:rgba(0,0,0,.13); --focus:rgba(37,99,235,.22);
   --sh:0 4px 24px rgba(0,0,0,.11); --sh-sm:0 1px 4px rgba(0,0,0,.07);
   --glow:0 0 28px rgba(37,99,235,.13);
+  --surface1:#fff; --surface2:#f7f8fc; --txt1:#111827;
 }
 :root{
   --ff:'Inter',system-ui,sans-serif; --fd:'Space Grotesk',system-ui,sans-serif; --fm:'JetBrains Mono',monospace;
@@ -158,19 +160,27 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 .ltheme{position:absolute;top:.9rem;right:.9rem;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:var(--r8);color:var(--muted);transition:all var(--tr)}
 .ltheme:hover{background:var(--hover);color:var(--txt)}
 
-/* ═══════ APP SCREEN ══════════════════════════════════════════════ */
-#app{display:none;min-height:100vh;flex-direction:column}
+/* ═══════ APP / PORTAL SCREENS ════════════════════════════════════ */
+#app,#mgrPortal,#tlPortal{display:none;min-height:100vh;flex-direction:column}
 #app.on{display:flex}
-
-/* ═══════ MANAGER PORTAL ══════════════════════════════════════════ */
-#mgrPortal{display:none;min-height:100vh;flex-direction:column}
 #mgrPortal.on{display:flex}
+#tlPortal.on{display:flex}
+
+/* ═══════ PORTAL BADGE VARIANTS ══════════════════════════════════ */
 .mgr-portal-badge{
   font-size:.68rem;font-weight:700;padding:.28rem .75rem;
   background:rgba(124,92,252,.15);color:var(--a2);
   border:1px solid rgba(124,92,252,.3);border-radius:var(--rf);
   letter-spacing:.04em;flex-shrink:0;
 }
+.tl-portal-badge{
+  font-size:.68rem;font-weight:700;padding:.28rem .75rem;
+  background:rgba(52,211,153,.15);color:#34d399;
+  border:1px solid rgba(52,211,153,.3);border-radius:var(--rf);
+  letter-spacing:.04em;flex-shrink:0;
+}
+
+/* ═══════ MANAGER / TL SHARED STYLES ═════════════════════════════ */
 .mgr-controls{
   display:flex;align-items:center;justify-content:space-between;
   gap:.75rem;margin-bottom:1.25rem;flex-wrap:wrap;
@@ -195,22 +205,12 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 .mgr-table td{padding:.7rem 1rem;border-bottom:1px solid var(--border);vertical-align:middle}
 .mgr-table tr:last-child td{border-bottom:none}
 .mgr-table tr:hover td{background:var(--elevated)}
-.mgr-dot{
-  display:inline-block;width:9px;height:9px;border-radius:50%;
-  margin-right:.5rem;flex-shrink:0;vertical-align:middle;
-}
+.mgr-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:.5rem;flex-shrink:0;vertical-align:middle}
 .mgr-badge{display:inline-block;padding:2px .55rem;border-radius:var(--rf);font-size:.68rem;font-weight:600}
-.mgr-bar-wrap{
-  display:inline-block;width:100px;height:6px;
-  background:var(--elevated);border-radius:var(--rf);
-  overflow:hidden;vertical-align:middle;margin-right:.5rem;
-}
+.mgr-bar-wrap{display:inline-block;width:100px;height:6px;background:var(--elevated);border-radius:var(--rf);overflow:hidden;vertical-align:middle;margin-right:.5rem}
 .mgr-bar{height:100%;border-radius:var(--rf);transition:width .4s ease}
 .mgr-pct{font-size:.72rem;color:var(--txt2);font-family:var(--fm)}
-.mgr-loading{
-  display:flex;align-items:center;gap:.75rem;justify-content:center;
-  padding:3rem;color:var(--txt2);font-size:.85rem;
-}
+.mgr-loading{display:flex;align-items:center;gap:.75rem;justify-content:center;padding:3rem;color:var(--txt2);font-size:.85rem}
 
 /* topbar */
 .bar{
@@ -243,7 +243,7 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 .signout:hover{color:var(--err);border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.06)}
 
 /* main */
-.main{margin-top:var(--bar);padding:1.75rem 1.5rem;max-width:900px;margin-left:auto;margin-right:auto;width:100%}
+.main{margin-top:var(--bar);padding:1.75rem 1.5rem;max-width:960px;margin-left:auto;margin-right:auto;width:100%}
 .phdr{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.4rem;flex-wrap:wrap}
 .ptitle{font-family:var(--fd);font-size:1.55rem;font-weight:700;letter-spacing:-.03em}
 .psub{font-size:.78rem;color:var(--txt2);margin-top:.15rem}
@@ -253,10 +253,7 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
   background:var(--surface);border:1px solid var(--border);
   border-radius:var(--r12);overflow:hidden;margin-bottom:1.25rem;
 }
-.sitem{
-  flex:1;padding:.9rem 1rem;border-right:1px solid var(--border);
-  display:flex;flex-direction:column;gap:2px;transition:background var(--tr);
-}
+.sitem{flex:1;padding:.9rem 1rem;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:2px;transition:background var(--tr)}
 .sitem:last-child{border-right:none}
 .sitem:hover{background:var(--elevated)}
 .slbl{font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
@@ -270,11 +267,7 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 .fg{display:flex;flex-direction:column;gap:.38rem}
 .flabel{font-size:.67rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--txt2);display:flex;align-items:center;gap:.2rem}
 .req{color:var(--err);font-size:.8rem}
-.fc{
-  width:100%;padding:.62rem .8rem;background:var(--inp);border:1px solid var(--inp-b);
-  border-radius:var(--r8);color:var(--txt);font-size:.875rem;
-  transition:border-color var(--tr),box-shadow var(--tr);
-}
+.fc{width:100%;padding:.62rem .8rem;background:var(--inp);border:1px solid var(--inp-b);border-radius:var(--r8);color:var(--txt);font-size:.875rem;transition:border-color var(--tr),box-shadow var(--tr)}
 .fc::placeholder{color:var(--muted)}
 .fc:focus{outline:none;border-color:var(--a1);box-shadow:0 0 0 3px var(--focus)}
 .fc.bad{border-color:var(--err) !important;box-shadow:0 0 0 3px rgba(248,113,113,.18) !important}
@@ -375,12 +368,6 @@ tr:hover .del-btn{opacity:1}
 .toast.i .ttico{background:rgba(249,115,22,.18);color:#f97316}
 .ttit{font-size:.9rem;font-weight:700;color:#fff;line-height:1.2}
 .tmsg{font-size:.75rem;color:rgba(255,255,255,.65);margin-top:3px;line-height:1.4}
-.overlay{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:1rem;backdrop-filter:blur(3px)}
-.overlay.on{display:flex}
-.dlg{background:var(--surface);border:1px solid var(--border-md);border-radius:var(--r16);padding:1.5rem;max-width:360px;width:100%;box-shadow:var(--sh)}
-.dlg-title{font-family:var(--fd);font-size:1rem;font-weight:700;margin-bottom:.4rem}
-.dlg-msg{font-size:.8rem;color:var(--txt2);margin-bottom:1.25rem;line-height:1.5}
-.dlg-btns{display:flex;gap:.6rem;justify-content:flex-end}
 
 /* ═══ PROJECT CHART ════════════════════════════════ */
 .chart-card{padding:1.4rem 1.4rem 1.6rem;margin-bottom:1.25rem}
@@ -521,7 +508,13 @@ tr:hover .del-btn{opacity:1}
   </button>
   <div class="lcard">
     <div class="lbrand">
-      <div class="logo"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg></div>
+      <div class="logo">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          <line x1="8" y1="14" x2="16" y2="14"/>
+        </svg>
+      </div>
       <div class="lname">TimeTrack</div>
       <div class="lsub">Worker Portal — sign in to log your time</div>
     </div>
@@ -529,7 +522,7 @@ tr:hover .del-btn{opacity:1}
     <div class="emp-load-err" id="empLoadErr" role="alert"></div>
     <form class="lfields" id="lform" novalidate>
       <div class="lfield">
-        <label class="llabel" for="lemp">Your Name</label>
+        <label class="llabel" for="lemp">Your Name / Role</label>
         <div class="liwrap">
           <svg class="liico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <select class="linput" id="lemp" required><option value="">— Select your name —</option></select>
@@ -560,8 +553,12 @@ tr:hover .del-btn{opacity:1}
         <div class="spin"></div>
       </button>
     </form>
-    <div class="dhint"><strong>🔑 Demo — </strong>select any name, password is <code>pass123</code></div>
-    <div class="lfooter">WebXR Team &middot; TimeTrack v2.0 &middot; Worker Portal</div>
+    <div class="dhint">
+      <strong>🔑 Demo — </strong>select any name, password is <code>pass123</code><br>
+      Manager: select <code>🔑 Manager</code>, password <code>manager123</code><br>
+      Team Leader: select <code>👥 Team Leader</code>, password <code>teamlead123</code>
+    </div>
+    <div class="lfooter">WebXR Team &middot; TimeTrack v4.0 &middot; Worker Portal</div>
   </div>
 </div>
 
@@ -569,7 +566,12 @@ tr:hover .del-btn{opacity:1}
 <div id="app">
   <header class="bar">
     <div class="bar-brand">
-      <div class="bar-logo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+      <div class="bar-logo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+      </div>
       <span class="bar-name">TimeTrack</span>
     </div>
     <div class="bar-div"></div>
@@ -623,10 +625,7 @@ tr:hover .del-btn{opacity:1}
     </div>
     <h2 class="day-heading" id="dayHeading"></h2>
     <div id="slotsContainer">
-      <div class="slot-loading">
-        <div class="slot-spinner"></div>
-        <span>Loading…</span>
-      </div>
+      <div class="slot-loading"><div class="slot-spinner"></div><span>Loading…</span></div>
     </div>
     <div class="thdr" style="margin-top:2rem">
       <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap">
@@ -680,7 +679,13 @@ tr:hover .del-btn{opacity:1}
 <div id="mgrPortal">
   <header class="bar">
     <div class="bar-brand">
-      <div class="bar-logo"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg></div>
+      <div class="bar-logo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          <line x1="8" y1="14" x2="16" y2="14"/>
+        </svg>
+      </div>
       <span class="bar-name">TimeTrack</span>
     </div>
     <div class="bar-div"></div>
@@ -706,15 +711,58 @@ tr:hover .del-btn{opacity:1}
     <div class="phdr">
       <div>
         <h1 class="ptitle">Manager Dashboard</h1>
-        <p class="psub">Team analytics — employee hours, client business &amp; project breakdown.</p>
+        <p class="psub">Team analytics — employees, clients, projects, finance & salaries.</p>
       </div>
       <div class="dbadge" id="mgrBadge"></div>
     </div>
     <div id="mgrApp">
-      <div class="slot-loading">
-        <div class="slot-spinner"></div>
-        <span>Loading team data…</span>
+      <div class="slot-loading"><div class="slot-spinner"></div><span>Loading team data…</span></div>
+    </div>
+  </main>
+</div>
+
+<!-- ═══ TEAM LEADER PORTAL ══════════════════════════════════════ -->
+<div id="tlPortal">
+  <header class="bar">
+    <div class="bar-brand">
+      <div class="bar-logo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          <line x1="8" y1="14" x2="16" y2="14"/>
+        </svg>
       </div>
+      <span class="bar-name">TimeTrack</span>
+    </div>
+    <div class="bar-div"></div>
+    <div class="bar-worker">
+      <div class="avatar" id="tlAv" style="background:linear-gradient(135deg,#34d399,#22d3ee);">TL</div>
+      <div class="winfo">
+        <span class="wname" id="tlName">Team Leader</span>
+        <span class="wteam" id="tlTeam">Team Leader Portal</span>
+      </div>
+    </div>
+    <div class="tl-portal-badge">👥 Team Leader View</div>
+    <div class="bar-right">
+      <button class="ibtn" onclick="togTheme()" aria-label="Toggle theme">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+      </button>
+      <button class="signout" onclick="logout()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span>Sign Out</span>
+      </button>
+    </div>
+  </header>
+  <main class="main">
+    <div class="phdr">
+      <div>
+        <h1 class="ptitle">Team Leader Dashboard</h1>
+        <p class="psub">Team overview — employee hours, project breakdown & attendance.</p>
+      </div>
+      <div class="dbadge" id="tlBadge"></div>
+    </div>
+    <div id="tlApp">
+      <div class="slot-loading"><div class="slot-spinner"></div><span>Loading team data…</span></div>
     </div>
   </main>
 </div>
@@ -722,7 +770,7 @@ tr:hover .del-btn{opacity:1}
 <!-- Toast -->
 <div class="tbox" id="tbox" aria-live="assertive"></div>
 
-<!-- JS Modules -->
+<!-- ═══ JS MODULES ══════════════════════════════════════════════ -->
 <script src="js/config.js"></script>
 <script src="js/data.js"></script>
 <script src="js/utils.js"></script>
@@ -732,18 +780,30 @@ tr:hover .del-btn{opacity:1}
 <script src="js/chart.js"></script>
 <script src="js/table.js"></script>
 <script src="js/manager.js"></script>
+<script src="js/emp-detail.js"></script>
+<script src="js/teamleader.js"></script>
+<script src="js/forceentry.js"></script>
+<script src="js/salary.js"></script>
+<script src="js/Client-Project.js"></script>
 <script>
+  // ── Boot ──────────────────────────────────────
   setTheme(getTheme());
-  $('lthm').onclick = togTheme;
-  $('athm').onclick = togTheme;
-  $('so').onclick   = logout;
-  $('dbadge').textContent = new Date().toLocaleDateString('en-IN',
+  $('lthm').onclick  = togTheme;
+  $('athm').onclick  = togTheme;
+  $('so').onclick    = logout;
+
+  // Date badges
+  const dateStr = new Date().toLocaleDateString('en-IN',
     { weekday:'long', day:'numeric', month:'long', year:'numeric' });
-  $('mgrBadge').textContent = new Date().toLocaleDateString('en-IN',
-    { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  $('dbadge').textContent  = dateStr;
+  $('mgrBadge').textContent = dateStr;
+  $('tlBadge').textContent  = dateStr;
+
+  // Init modules
   initTable();
   initChart();
   initLogin();
+  initForceEntry();
 </script>
 </body>
 </html>
