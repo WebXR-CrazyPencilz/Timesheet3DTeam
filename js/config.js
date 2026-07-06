@@ -3,10 +3,8 @@
 // ═══════════════════════════════════════════════════
 
 const CONFIG = {
-  // ► STEP 1: Paste your Apps Script Web App URL here
-  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbwpyBU-VeqF6hVlTmaJT35XoThkYqF51zVxr8r8gO537RM-cDHyPueLuGl3FZW51B6AjA/exec',
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbzQesiyHnvyRRAfJHzWidiith3TXK9oqMZM6oTlrFNR4rz7eomXmxp3zt9U9t8efz7lRg/exec',
 
-  // ► STEP 2: Set to false once your Sheet is connected
   DEMO_MODE: false,
 
   DEMO_PW:   'pass123',
@@ -14,6 +12,16 @@ const CONFIG = {
   LS_SESSION:'tt_sess',
   PAGE_SIZE: 20,
 
+  // ── Role credentials ──────────────────────────
   MANAGER_ID: 'MGR',
   MANAGER_PW: 'manager123',
+
+  TL_ID: 'TL',           // ← NEW: Team Leader login ID
+  TL_PW: 'teamlead123',  // ← NEW: Team Leader password
+
+  // ── App settings ──────────────────────────────
+  CURRENCY:        '₹',
+  OFFICE_START:    '09:30',
+  LUNCH_MINS:      45,
+  EXTENDED_START:  '19:30',
 };

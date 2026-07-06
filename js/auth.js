@@ -1,10 +1,11 @@
 // ═══════════════════════════════════════════════════
-// AUTH.JS — Employee + Manager login support
+// AUTH.JS — Employee + Manager + Team Leader login
 // ═══════════════════════════════════════════════════
 
 let USER           = null;
 let LIVE_EMPLOYEES = [];
 let MANAGER_MODE   = false;
+let TL_MODE        = false;
 
 async function initLogin() {
   console.log('[AUTH] initLogin | DEMO_MODE:', CONFIG.DEMO_MODE);
@@ -16,8 +17,9 @@ async function initLogin() {
     if (s) {
       const u = JSON.parse(s);
       if (u?.id) {
-        if (u.role === 'manager') loginAsManager(u, true);
-        else loginAs(u, true);
+        if (u.role === 'manager')    loginAsManager(u, true);
+        else if (u.role === 'tl')    loginAsTL(u, true);
+        else                         loginAs(u, true);
       }
     }
   } catch(e) {
@@ -70,11 +72,16 @@ function renderEmployeeDropdown() {
   const empSel = $('lemp');
   const tabs   = $('etabs');
 
-  // Add Manager option at top
+  // Add Manager + TL options at top
   const mgrOpt = document.createElement('option');
-  mgrOpt.value       = CONFIG.MANAGER_ID || 'MGR';
+  mgrOpt.value = CONFIG.MANAGER_ID || 'MGR';
   mgrOpt.textContent = '🔑 Manager';
   empSel.appendChild(mgrOpt);
+
+  const tlOpt = document.createElement('option');
+  tlOpt.value = CONFIG.TL_ID || 'TL';
+  tlOpt.textContent = '👥 Team Leader';
+  empSel.appendChild(tlOpt);
 
   LIVE_EMPLOYEES.forEach(e => {
     const o = document.createElement('option');
@@ -108,6 +115,9 @@ function renderEmployeeDropdown() {
     if (id === (CONFIG.MANAGER_ID || 'MGR')) {
       txt.textContent = 'Manager Access';
       pill.classList.add('show');
+    } else if (id === (CONFIG.TL_ID || 'TL')) {
+      txt.textContent = 'Team Leader Access';
+      pill.classList.add('show');
     } else if (emp) {
       txt.textContent = `${emp.id} · ${emp.team}`;
       pill.classList.add('show');
@@ -137,12 +147,19 @@ function renderEmployeeDropdown() {
 
     btn.classList.add('ld'); btn.disabled = true;
     try {
-      // Manager login check
+      // Manager login
       if (id === (CONFIG.MANAGER_ID || 'MGR')) {
         if (pw !== CONFIG.MANAGER_PW) throw new Error('Wrong manager password.');
         loginAsManager({ id: 'MGR', name: 'Manager', team: 'Management', role: 'manager' });
         return;
       }
+      // Team Leader login
+      if (id === (CONFIG.TL_ID || 'TL')) {
+        if (pw !== CONFIG.TL_PW) throw new Error('Wrong team leader password.');
+        loginAsTL({ id: 'TL', name: 'Team Leader', team: 'All Teams', role: 'tl' });
+        return;
+      }
+      // Employee login
       const user = await apiLogin(id, pw);
       loginAs(user);
     } catch(e) {
@@ -158,6 +175,7 @@ function renderEmployeeDropdown() {
 // ── EMPLOYEE LOGIN ────────────────────────────────
 async function loginAs(emp, silent = false) {
   MANAGER_MODE = false;
+  TL_MODE      = false;
   USER = emp;
   sessionStorage.setItem(CONFIG.LS_SESSION, JSON.stringify(emp));
 
@@ -168,6 +186,7 @@ async function loginAs(emp, silent = false) {
 
   $('login').classList.add('gone');
   $('mgrPortal').classList.remove('on');
+  $('tlPortal')?.classList.remove('on');
   $('app').classList.add('on');
 
   ENTRIES = await apiLoadEntries(emp.id);
@@ -183,6 +202,7 @@ async function loginAs(emp, silent = false) {
 // ── MANAGER LOGIN ─────────────────────────────────
 async function loginAsManager(emp, silent = false) {
   MANAGER_MODE = true;
+  TL_MODE      = false;
   USER = emp;
   sessionStorage.setItem(CONFIG.LS_SESSION, JSON.stringify({ ...emp, role: 'manager' }));
 
@@ -195,19 +215,44 @@ async function loginAsManager(emp, silent = false) {
 
   $('login').classList.add('gone');
   $('app').classList.remove('on');
+  $('tlPortal')?.classList.remove('on');
   $('mgrPortal').classList.add('on');
 
   if (!silent) toast('s', `Welcome, Manager! 👋`, 'Manager Portal');
   initManager();
 }
 
-// ── LOGOUT ───────────────────────────────────────
+// ── TEAM LEADER LOGIN ─────────────────────────────
+async function loginAsTL(emp, silent = false) {
+  MANAGER_MODE = false;
+  TL_MODE      = true;
+  USER = emp;
+  sessionStorage.setItem(CONFIG.LS_SESSION, JSON.stringify({ ...emp, role: 'tl' }));
+
+  const av = $('tlAv');
+  if (av) av.textContent = 'TL';
+  const tn = $('tlName');
+  if (tn) tn.textContent = emp.name;
+  const tt = $('tlTeam');
+  if (tt) tt.textContent = 'Team Leader Portal';
+
+  $('login').classList.add('gone');
+  $('app').classList.remove('on');
+  $('mgrPortal').classList.remove('on');
+  $('tlPortal').classList.add('on');
+
+  if (!silent) toast('s', `Welcome, Team Leader! 👋`, 'Team Leader Portal');
+  initTeamLeader();
+}
+
+// ── LOGOUT ────────────────────────────────────────
 function logout() {
   sessionStorage.removeItem(CONFIG.LS_SESSION);
-  USER = null; ENTRIES = []; MANAGER_MODE = false;
+  USER = null; ENTRIES = []; MANAGER_MODE = false; TL_MODE = false;
 
   $('app').classList.remove('on');
   $('mgrPortal').classList.remove('on');
+  $('tlPortal')?.classList.remove('on');
   $('login').classList.remove('gone');
   $('lemp').value = ''; $('lpw').value = '';
   $('idpill').classList.remove('show');
