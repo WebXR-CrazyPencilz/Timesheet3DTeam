@@ -14,7 +14,7 @@ const CONFIG = {
 
   // ── Role credentials ──────────────────────────
   MANAGER_ID: 'MGR',
-  MANAGER_PW: 'manager123',
+  MANAGER_PW: 'lkjhgfdsa',
 
   TL_ID: 'TL',           // ← NEW: Team Leader login ID
   TL_PW: 'teamlead123',  // ← NEW: Team Leader password
