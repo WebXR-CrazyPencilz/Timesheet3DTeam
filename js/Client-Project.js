@@ -77,23 +77,43 @@ function parseAppTimestamp(str) {
   return new Date(parseInt(m[3], 10), mon, parseInt(m[1], 10), hour, parseInt(m[5], 10), parseInt(m[6], 10)).getTime();
 }
 
-// Projects sorted most-recently-updated first (falls back to Created
-// Date, then leaves untouched legacy rows — with neither — at the end).
-function sortProjectsByRecency(projects) {
-  return projects.slice().sort((a, b) => {
-    const at = parseAppTimestamp(a.updatedDate) || parseAppTimestamp(a.createdDate);
-    const bt = parseAppTimestamp(b.updatedDate) || parseAppTimestamp(b.createdDate);
-    return bt - at;
-  });
+// Projects sorted by REAL activity first — when they were last
+// actually worked on, per the Timesheet — not by Project Master
+// metadata alone. Most existing projects are legacy rows created
+// before "Created/Updated Date" existed as columns, so those are
+// blank for them; sorting on that alone left every legacy project
+// with an identical score of 0, which is a no-op sort (exactly what
+// the screenshot showed — original sheet order, untouched). Timesheet
+// activity is real signal that already exists for every project
+// with any hours logged, so that's the primary signal now, with the
+// Project Master timestamp only as a fallback for a brand-new
+// project that has no hours logged against it yet.
+function getProjectLastActivity(project) {
+  let latest = Math.max(parseAppTimestamp(project.updatedDate), parseAppTimestamp(project.createdDate));
+
+  if (typeof CP_TIMESHEET_DATA !== 'undefined' && CP_TIMESHEET_DATA.length) {
+    CP_TIMESHEET_DATA.forEach(e => {
+      if (e.project !== project.projectName || e.status === 'Leave' || !e.date) return;
+      const t = new Date(e.date + 'T00:00:00').getTime();
+      if (t > latest) latest = t;
+    });
+  }
+
+  return latest;
 }
 
-// A client's "last activity" is the most recent update across any of
-// its projects — a client with nothing happening on any project sorts
-// to the end, one with a just-updated project rises to the top.
+function sortProjectsByRecency(projects) {
+  return projects.slice().sort((a, b) => getProjectLastActivity(b) - getProjectLastActivity(a));
+}
+
+// A client's "last activity" is the most recent activity across any
+// of its projects — a client with nothing happening on any project
+// sorts to the end, one with a project that was worked on recently
+// rises to the top.
 function getClientLastActivity(clientId) {
   const projects = CP_PROJECTS.filter(p => p.clientId === clientId);
   if (!projects.length) return 0;
-  return Math.max(...projects.map(p => parseAppTimestamp(p.updatedDate) || parseAppTimestamp(p.createdDate)));
+  return Math.max(...projects.map(getProjectLastActivity));
 }
 
 function clientHasActiveProject(clientId) {
