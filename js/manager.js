@@ -69,6 +69,10 @@ async function initManager() {
     );
     MGR_DATA = results.flat();
 
+    if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestTimesheetData === 'function') {
+      ClientProjectAPI.ingestTimesheetData(MGR_DATA);
+    }
+
     renderManagerPortal();
   } catch(err) {
     container.innerHTML = `<div class="slot-error">Failed to load: ${err.message}</div>`;
@@ -226,7 +230,7 @@ function renderEmpCards(content, worked, all) {
       hours: 0, days: new Set(), leaves: 0,
       projectMap: {}, missedDays: [],
       monthHours: 0, monthDays: 0, monthLeaves: 0, monthNotLogged: 0,
-      monthProjectMap: {}, todayHours: 0, todayStatus: 'Working',
+      monthProjectMap: {}, todayHours: 0, todayStatus: 'Working', lastActivityDate: '',
     };
   });
 
@@ -288,9 +292,20 @@ function renderEmpCards(content, worked, all) {
     if (todayLeave)                              emp.todayStatus = 'Leave';
     else if (todayDow === 0 || todayDow === 6)   emp.todayStatus = 'Weekend';
     else                                          emp.todayStatus = 'Working';
+
+    // Most recent activity date across this employee's ENTIRE history
+    // (not just the current range filter) — used to sort so the most
+    // recently active employee shows first, regardless of how many
+    // total hours they've logged in whatever range is selected.
+    emp.lastActivityDate = MGR_DATA
+      .filter(e => e.empId === emp.id)
+      .reduce((max, e) => (e.date > max ? e.date : max), '');
   });
 
-  const rows = Object.values(empMap).sort((a,b) => b.hours - a.hours);
+  const rows = Object.values(empMap).sort((a, b) => {
+    if (a.lastActivityDate !== b.lastActivityDate) return b.lastActivityDate.localeCompare(a.lastActivityDate);
+    return b.hours - a.hours; // tie-break: same last-activity day, higher hours first
+  });
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `

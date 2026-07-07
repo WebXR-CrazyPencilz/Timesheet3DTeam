@@ -2,9 +2,10 @@
 // CLIENT-PROJECT.JS — Client + Project business module
 //
 // This is the single source of truth for everything Client- and
-// Project-related. manager.js only hands this module a content
-// container to render into (renderClientTab / renderProjectTab) — it
-// never calculates or stores Client/Project data itself.
+// Project-related. manager.js AND teamleader.js only hand this
+// module a content container to render into (renderClientTab /
+// renderProjectTab) plus their fetched master/timesheet data — this
+// module never asks either portal file to calculate anything itself.
 //
 // This is NOT a task assignment system, NOT a Kanban board, and NOT
 // a project management tool. Employees keep submitting work through
@@ -31,7 +32,7 @@
 // Cost/Profit calculation (Manager view only, since it depends on
 // Project Constant/Value which Team Leaders never see) is fully
 // automatic, reusing data other modules already own:
-//   • Timesheet hours  → global MGR_DATA (populated by manager.js)
+//   • Timesheet hours  → CP_TIMESHEET_DATA (forwarded by whichever portal is active)
 //   • Monthly Points    → salary.js's getEffectiveSalary(empId, month)
 //   • Project Constant  → this module's own project record
 // No manual entry, no duplicated math.
@@ -42,10 +43,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 // ── State ─────────────────────────────────────────────────────
-let CP_ROLE          = null;   // 'manager' | 'tl' | null
-let CP_CLIENTS       = [];     // [{ id, name }]
-let CP_PROJECTS      = [];     // full project records (fields depend on role — see backend)
-let CP_MASTER_LOADED = false;  // did manager.js already forward employees/clients/projects to us?
+let CP_ROLE           = null;   // 'manager' | 'tl' | null
+let CP_CLIENTS        = [];     // [{ id, name }]
+let CP_PROJECTS       = [];     // full project records (fields depend on role — see backend)
+let CP_EMPLOYEES      = [];     // [{ id, name, team }] — forwarded by whichever portal is active
+let CP_TIMESHEET_DATA = [];     // all employee timesheet entries — forwarded by whichever portal is active
+let CP_MASTER_LOADED  = false;  // did the active portal already forward master data to us?
 
 const CP_STATUSES = ['In Progress', 'Completed', 'On Hold'];
 
@@ -54,6 +57,52 @@ const CP_STATUS_META = {
   'Completed':   { bg: 'rgba(52,211,153,0.12)',  fg: '#34d399' },
   'On Hold':     { bg: 'rgba(251,191,36,0.12)',  fg: '#fbbf24' },
 };
+
+// ── RECENCY HELPERS ──────────────────────────────────────────
+// Code.gs writes Created/Updated Date as e.g. "07 Jul 2026, 03:15:00 PM"
+// (Utilities.formatDate with 'dd MMM yyyy, hh:mm:ss a') — not directly
+// sortable as a string and not reliably parsed by `new Date(str)`
+// across browsers, so this parses that exact format explicitly.
+// Returns 0 for blank/unrecognized values (legacy rows that predate
+// these columns), which naturally sorts them last.
+const CP_MONTH_ABBR = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+function parseAppTimestamp(str) {
+  if (!str) return 0;
+  const m = /^(\d{1,2})\s+(\w{3})\s+(\d{4}),\s*(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)$/i.exec(String(str).trim());
+  if (!m) return 0;
+  const mon = CP_MONTH_ABBR[m[2].toLowerCase()];
+  if (mon === undefined) return 0;
+  let hour = parseInt(m[4], 10) % 12;
+  if (/pm/i.test(m[7])) hour += 12;
+  return new Date(parseInt(m[3], 10), mon, parseInt(m[1], 10), hour, parseInt(m[5], 10), parseInt(m[6], 10)).getTime();
+}
+
+// Projects sorted most-recently-updated first (falls back to Created
+// Date, then leaves untouched legacy rows — with neither — at the end).
+function sortProjectsByRecency(projects) {
+  return projects.slice().sort((a, b) => {
+    const at = parseAppTimestamp(a.updatedDate) || parseAppTimestamp(a.createdDate);
+    const bt = parseAppTimestamp(b.updatedDate) || parseAppTimestamp(b.createdDate);
+    return bt - at;
+  });
+}
+
+// A client's "last activity" is the most recent update across any of
+// its projects — a client with nothing happening on any project sorts
+// to the end, one with a just-updated project rises to the top.
+function getClientLastActivity(clientId) {
+  const projects = CP_PROJECTS.filter(p => p.clientId === clientId);
+  if (!projects.length) return 0;
+  return Math.max(...projects.map(p => parseAppTimestamp(p.updatedDate) || parseAppTimestamp(p.createdDate)));
+}
+
+function clientHasActiveProject(clientId) {
+  return CP_PROJECTS.some(p => p.clientId === clientId && p.status === 'In Progress');
+}
+
+function sortClientsByRecency(clients) {
+  return clients.slice().sort((a, b) => getClientLastActivity(b.id) - getClientLastActivity(a.id));
+}
 
 // Resolve the current portal role from the same session globals
 // auth.js already maintains — no new auth logic introduced here.
@@ -120,21 +169,32 @@ function ensureCPStyles() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// MASTER DATA HAND-OFF — manager.js calls this once after its own
-// apiGetMasterData() fetch, instead of this module re-requesting the
-// same data. Also keeps window.MGR_CLIENTS / MGR_PROJECTS populated
-// for other files (Force Entry's client/project dropdowns etc.) that
-// already expect those globals from before this refactor.
+// MASTER DATA HAND-OFF — manager.js AND teamleader.js each call this
+// once after their own apiGetMasterData() fetch, instead of this
+// module re-requesting the same data. Also keeps window.MGR_CLIENTS /
+// MGR_PROJECTS populated for other files (Force Entry's client/project
+// dropdowns etc.) that already expect those globals from before this
+// refactor.
 // ══════════════════════════════════════════════════════════════
 window.ClientProjectAPI = window.ClientProjectAPI || {};
 ClientProjectAPI.ingestMasterData = function(master) {
   window.MGR_CLIENTS  = master.clients  || [];
   window.MGR_PROJECTS = master.projects || [];
+  CP_EMPLOYEES     = master.employees || [];
   CP_MASTER_LOADED = true;
 };
 
+// TIMESHEET HAND-OFF — manager.js AND teamleader.js each call this
+// once after fetching every employee's history, so Team & Hours and
+// Cost/Profit work correctly no matter which portal is active. Reading
+// the portal-specific MGR_DATA/TL_DATA globals directly would silently
+// break for whichever portal didn't populate them.
+ClientProjectAPI.ingestTimesheetData = function(entries) {
+  CP_TIMESHEET_DATA = entries || [];
+};
+
 // ══════════════════════════════════════════════════════════════
-// ENTRY POINTS — called by manager.js's tab router.
+// ENTRY POINTS — called by manager.js's and teamleader.js's tab routers.
 // ══════════════════════════════════════════════════════════════
 async function renderClientTab(content) {
   ensureCPStyles();
@@ -213,7 +273,7 @@ function renderClientList(content) {
         <tbody>
           ${CP_CLIENTS.length === 0
             ? `<tr><td colspan="3" style="text-align:center;padding:2rem;color:var(--txt2);">No clients yet.${isManager ? ' Click “+ New Client” to add one.' : ''}</td></tr>`
-            : CP_CLIENTS.map(c => buildClientRow(c, isManager)).join('')}
+            : sortClientsByRecency(CP_CLIENTS).map(c => buildClientRow(c, isManager)).join('')}
         </tbody>
       </table>
     </div>
@@ -226,10 +286,14 @@ function renderClientList(content) {
 }
 
 function buildClientRow(client, isManager) {
+  const isActive = clientHasActiveProject(client.id);
   return `
     <tr style="border-top:1px solid var(--border);">
       <td style="padding:9px 12px;color:var(--txt2);font-family:var(--fm);">${esc(client.id)}</td>
-      <td style="padding:9px 12px;color:var(--txt1);font-weight:600;">${esc(client.name)}</td>
+      <td style="padding:9px 12px;color:var(--txt1);font-weight:600;">
+        ${isActive ? `<span title="Has an active project" style="display:inline-block;width:7px;height:7px;
+          border-radius:50%;background:#34d399;margin-right:6px;"></span>` : ''}${esc(client.name)}
+      </td>
       ${isManager ? `<td style="padding:9px 12px;text-align:right;">
         <button class="cp-client-edit" data-id="${esc(client.id)}" style="background:none;border:1px solid var(--border-md);
           color:var(--txt2);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;">✏️ Edit</button>
@@ -367,15 +431,20 @@ function renderClientTree(content) {
     return;
   }
 
-  tree.innerHTML = CP_CLIENTS.map(c => {
-    const projects = CP_PROJECTS.filter(p => p.clientId === c.id);
+  const sortedClients = sortClientsByRecency(CP_CLIENTS);
+
+  tree.innerHTML = sortedClients.map(c => {
+    const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === c.id));
     const isOpen   = CP_DASH_EXPANDED.has(c.id);
+    const isActive = clientHasActiveProject(c.id);
     return `
       <div style="margin-bottom:4px;">
         <div style="display:flex;align-items:center;">
           <button class="cp-tree-client" data-id="${esc(c.id)}" style="flex:1;display:flex;align-items:center;gap:6px;
             background:none;border:none;text-align:left;padding:7px 8px;border-radius:8px;cursor:pointer;color:var(--txt1);">
             <span style="font-size:10px;color:var(--txt2);width:10px;flex-shrink:0;">${isOpen ? '▾' : '▸'}</span>
+            ${isActive ? `<span title="Has an active project" style="width:7px;height:7px;border-radius:50%;
+              background:#34d399;flex-shrink:0;"></span>` : ''}
             <span style="font-size:12.5px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.name)}</span>
             <span style="font-size:10px;color:var(--txt2);flex-shrink:0;">${projects.length}</span>
           </button>
@@ -499,6 +568,7 @@ async function renderDashPanel(content) {
 // ══════════════════════════════════════════════════════════════
 function renderProjectList(content) {
   const isManager = CP_ROLE === 'manager';
+  const sortedProjects = sortProjectsByRecency(CP_PROJECTS);
 
   content.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:8px;">
@@ -524,7 +594,7 @@ function renderProjectList(content) {
           <tbody>
             ${CP_PROJECTS.length === 0
               ? `<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--txt2);">No projects yet.${isManager ? ' Click “+ New Project” to add one.' : ''}</td></tr>`
-              : CP_PROJECTS.map(p => buildProjectRow(p)).join('')}
+              : sortedProjects.map(p => buildProjectRow(p)).join('')}
           </tbody>
         </table>
       </div>
@@ -734,9 +804,7 @@ async function deleteProjectFromForm(content, project, onDone) {
 // employees keep logging time in the existing Timesheet as before.
 // ══════════════════════════════════════════════════════════════
 function getProjectTeamActivity(project) {
-  if (typeof MGR_DATA === 'undefined') return null;
-
-  const entries = MGR_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
+  const entries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
   const byMonth = {}; // { 'YYYY-MM': { empId: hoursSum } }
   entries.forEach(e => {
     const month = (e.date || '').slice(0, 7);
@@ -755,7 +823,7 @@ function getProjectTeamActivity(project) {
       .map(([empId, hours]) => {
         monthHours += hours;
         allMembers.add(empId);
-        const emp = (typeof MGR_EMPLOYEES !== 'undefined') ? MGR_EMPLOYEES.find(e => e.id === empId) : null;
+        const emp = CP_EMPLOYEES.find(e => e.id === empId);
         return { empId, name: emp ? emp.name : empId, hours };
       })
       .sort((a, b) => b.hours - a.hours);
@@ -919,9 +987,7 @@ async function ensureSalaryDataLoaded() {
 }
 
 function calculateProjectCost(project) {
-  if (typeof MGR_DATA === 'undefined') return null;
-
-  const projectEntries = MGR_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
+  const projectEntries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
 
   const byMonth = {}; // { 'YYYY-MM': { empId: hoursSum } }
   projectEntries.forEach(e => {
