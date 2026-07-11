@@ -37,6 +37,14 @@
 //   • Project Constant  → this module's own project record
 // No manual entry, no duplicated math.
 //
+// UI: Client and Project tabs are card grids (not tables/lists),
+// matching the Employee tab's card style. Clicking a client card
+// opens a Client Detail page showing that client's own projects as
+// a scoped card grid; clicking a project card (from either the main
+// Project tab or a Client Detail page) opens the existing role-aware
+// detail/edit form — that form, the Team & Hours section, and the
+// Cost/Profit section are unchanged by this.
+//
 // Future-ready: window.ClientProjectAPI exposes read access for
 // later modules (profit dashboard, invoicing, revenue tracking, etc.)
 // without them needing to know this file's internal variable names.
@@ -184,6 +192,72 @@ function ensureCPStyles() {
     .cp-nav-btn:disabled { opacity:.3;cursor:default; }
     .cp-bar-track { background:var(--surface2);border-radius:4px;height:6px;overflow:hidden; }
     .cp-bar-fill { height:100%;border-radius:4px;background:var(--a1); }
+
+    /* ── Card grid (Client + Project tabs) ─────────────────────── */
+    .cp-tab-header {
+      display:flex;align-items:center;justify-content:space-between;
+      margin-bottom:1.1rem;flex-wrap:wrap;gap:8px;
+    }
+    .cp-tab-title { font-size:16px;font-weight:700;color:var(--txt1); }
+    .cp-tab-sub { font-size:12px;color:var(--txt2); }
+
+    .cp-back-btn {
+      display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;
+      border:1px solid var(--border-md);background:var(--elevated);color:var(--txt2);
+      font-size:13px;font-weight:600;cursor:pointer;
+    }
+
+    .cp-card-grid {
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+      gap:1.25rem;margin-top:.5rem;
+    }
+
+    .cp-entity-card {
+      background:var(--surface1);border:1px solid var(--border);border-radius:14px;
+      padding:1.1rem;display:flex;flex-direction:column;
+    }
+    .cp-entity-head { display:flex;align-items:center;gap:10px;margin-bottom:.9rem; }
+    .cp-entity-avatar {
+      width:38px;height:38px;border-radius:50%;flex-shrink:0;
+      background:linear-gradient(135deg,var(--a1),#7c5cfc);
+      display:flex;align-items:center;justify-content:center;
+      font-weight:700;font-size:13px;color:#fff;
+    }
+    .cp-entity-titles { flex:1;min-width:0; }
+    .cp-entity-name {
+      font-weight:600;font-size:14px;color:var(--txt1);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .cp-entity-id {
+      font-size:11px;color:var(--txt2);
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+
+    .cp-icon-btn {
+      flex-shrink:0;background:none;border:none;color:var(--txt2);cursor:pointer;
+      font-size:13px;padding:4px 6px;border-radius:6px;
+    }
+    .cp-icon-btn:hover { background:var(--surface2); }
+
+    .cp-status-pill {
+      display:inline-flex;align-items:center;gap:5px;border-radius:20px;
+      padding:4px 10px;font-size:11px;font-weight:700;
+    }
+    .cp-status-dot { width:6px;height:6px;border-radius:50%;flex-shrink:0; }
+
+    .cp-entity-metrics {
+      display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.9rem;
+    }
+    .cp-metric-box { background:var(--surface2);border-radius:10px;padding:8px 12px; }
+    .cp-metric-label {
+      font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;
+    }
+    .cp-metric-val { font-size:16px;font-weight:800;color:var(--txt1); }
+
+    .cp-view-btn {
+      align-self:flex-start;margin-top:auto;background:var(--a1);color:#fff;border:none;
+      border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -225,17 +299,16 @@ async function renderClientTab(content) {
   }
   content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading clients…</span></div>`;
   try {
-    // The dashboard needs both clients (for the tree) and projects
-    // (for the bars) — Team Leader's plain list only needs clients,
-    // but loading both here keeps this one code path simple.
+    // Client cards need both clients (for the grid itself) and
+    // projects (for the "project count" / "active" badge on each
+    // card, and for the scoped grid on the Client Detail page).
     await Promise.all([loadClientData(), loadProjectData()]);
   } catch(err) {
     content.innerHTML = `<div class="slot-error">Failed to load clients: ${esc(err.message)}</div>`;
     return;
   }
 
-  if (CP_ROLE === 'manager') renderClientPerformanceDashboard(content);
-  else renderClientList(content); // TL: read-only, no bars — those reveal Project Constant/Employee Cost
+  renderClientCards(content);
 }
 
 async function renderProjectTab(content) {
@@ -265,60 +338,87 @@ async function loadProjectData() {
 }
 
 // ══════════════════════════════════════════════════════════════
-// CLIENT — list + create (Client Name only; Client ID is
+// CLIENT — card grid + create (Client Name only; Client ID is
 // auto-generated, read-only, shown as a live preview before saving).
+// Clicking a card opens a Client Detail page (that client's own
+// projects, scoped, as their own card grid).
 // ══════════════════════════════════════════════════════════════
-function renderClientList(content) {
+function renderClientCards(content) {
   const isManager = CP_ROLE === 'manager';
+  const sorted = sortClientsByRecency(CP_CLIENTS);
 
   content.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:8px;">
+    <div class="cp-tab-header">
       <div>
-        <div style="font-size:16px;font-weight:700;color:var(--txt1);">🏢 Clients</div>
-        <div style="font-size:12px;color:var(--txt2);">Client ID is auto-generated and permanent once created.</div>
+        <div class="cp-tab-title">🏢 Clients</div>
+        <div class="cp-tab-sub">${isManager ? 'Client ID is auto-generated and permanent once created.' : 'View each client\u2019s projects and progress.'}</div>
       </div>
-      ${isManager ? `<button id="cpNewClientBtn" style="background:var(--a1);color:#fff;border:none;
-        border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">+ New Client</button>` : ''}
+      ${isManager ? `<button id="cpNewClientBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Client</button>` : ''}
     </div>
 
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-        <thead>
-          <tr>
-            <th style="text-align:left;padding:9px 12px;background:var(--surface2);color:var(--txt2);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;">Client ID</th>
-            <th style="text-align:left;padding:9px 12px;background:var(--surface2);color:var(--txt2);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;">Client Name</th>
-            ${isManager ? `<th style="width:1%;background:var(--surface2);"></th>` : ''}
-          </tr>
-        </thead>
-        <tbody>
-          ${CP_CLIENTS.length === 0
-            ? `<tr><td colspan="3" style="text-align:center;padding:2rem;color:var(--txt2);">No clients yet.${isManager ? ' Click “+ New Client” to add one.' : ''}</td></tr>`
-            : sortClientsByRecency(CP_CLIENTS).map(c => buildClientRow(c, isManager)).join('')}
-        </tbody>
-      </table>
-    </div>
+    ${sorted.length === 0
+      ? `<div class="chart-empty">No clients yet.${isManager ? ' Click “+ New Client” to add one.' : ''}</div>`
+      : `<div class="cp-card-grid">${sorted.map(c => buildClientCard(c, isManager)).join('')}</div>`}
   `;
 
-  $('cpNewClientBtn')?.addEventListener('click', () => openClientEditor(content));
-  content.querySelectorAll('.cp-client-edit').forEach(btn => {
-    btn.addEventListener('click', () => openClientEditor(content, CP_CLIENTS.find(c => c.id === btn.dataset.id)));
+  $('cpNewClientBtn')?.addEventListener('click', () =>
+    openClientEditor(content, null, () => renderClientCards(content)));
+
+  content.querySelectorAll('.cp-client-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const client = CP_CLIENTS.find(c => c.id === btn.dataset.id);
+      if (client) renderClientDetail(content, client);
+    });
+  });
+  content.querySelectorAll('.cp-client-edit-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const client = CP_CLIENTS.find(c => c.id === btn.dataset.id);
+      if (client) openClientEditor(content, client, () => renderClientCards(content));
+    });
   });
 }
 
-function buildClientRow(client, isManager) {
+function buildClientCard(client, isManager) {
+  const initials = client.name.split(' ').map(w => w[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) || '?';
   const isActive = clientHasActiveProject(client.id);
+  const clientProjects = CP_PROJECTS.filter(p => p.clientId === client.id);
+  const totalHours = clientProjects.reduce((s, p) => s + getProjectTeamActivity(p).totalHours, 0);
+
+  const st = isActive
+    ? { bg: 'rgba(52,211,153,0.12)', fg: '#34d399', label: 'Active Project' }
+    : { bg: 'rgba(148,163,184,0.12)', fg: '#94a3b8', label: 'No Active Project' };
+
   return `
-    <tr style="border-top:1px solid var(--border);">
-      <td style="padding:9px 12px;color:var(--txt2);font-family:var(--fm);">${esc(client.id)}</td>
-      <td style="padding:9px 12px;color:var(--txt1);font-weight:600;">
-        ${isActive ? `<span title="Has an active project" style="display:inline-block;width:7px;height:7px;
-          border-radius:50%;background:#34d399;margin-right:6px;"></span>` : ''}${esc(client.name)}
-      </td>
-      ${isManager ? `<td style="padding:9px 12px;text-align:right;">
-        <button class="cp-client-edit" data-id="${esc(client.id)}" style="background:none;border:1px solid var(--border-md);
-          color:var(--txt2);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;">✏️ Edit</button>
-      </td>` : ''}
-    </tr>`;
+    <div class="cp-entity-card">
+      <div class="cp-entity-head">
+        <div class="cp-entity-avatar">${esc(initials)}</div>
+        <div class="cp-entity-titles">
+          <div class="cp-entity-name" title="${esc(client.name)}">${esc(client.name)}</div>
+          <div class="cp-entity-id">${esc(client.id)}</div>
+        </div>
+        ${isManager ? `<button class="cp-icon-btn cp-client-edit-btn" data-id="${esc(client.id)}" title="Edit client">✏️</button>` : ''}
+      </div>
+
+      <div style="margin-bottom:.9rem;">
+        <span class="cp-status-pill" style="background:${st.bg};color:${st.fg};">
+          <span class="cp-status-dot" style="background:${st.fg};"></span>${st.label}
+        </span>
+      </div>
+
+      <div class="cp-entity-metrics">
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Projects</div>
+          <div class="cp-metric-val">${clientProjects.length}</div>
+        </div>
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Total Hours</div>
+          <div class="cp-metric-val">${totalHours.toFixed(1)}h</div>
+        </div>
+      </div>
+
+      <button class="cp-view-btn cp-client-view-btn" data-id="${esc(client.id)}">View Projects →</button>
+    </div>`;
 }
 
 // Create (no client passed) or rename (client passed) — Manager only,
@@ -326,7 +426,7 @@ function buildClientRow(client, isManager) {
 function openClientEditor(content, client = null, onDone = null) {
   if (CP_ROLE !== 'manager') return;
   const isNew = !client;
-  const refresh = onDone || (() => renderClientList(content));
+  const refresh = onDone || (() => renderClientCards(content));
 
   const overlay = document.createElement('div');
   overlay.className = 'cp-modal-overlay';
@@ -398,251 +498,164 @@ function openClientEditor(content, client = null, onDone = null) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// CLIENT PERFORMANCE DASHBOARD (Manager only) — a tree of Clients →
-// Projects on the left. Selecting a project shows three horizontal
-// bars scaled against each other for instant profitability
-// comparison:
-//   Project Constant  → the project's allocated budget
-//   Employee Efforts  → Hours × Monthly Points, summed across every
-//                        month the project has activity (same math
-//                        as the Cost/Profit section in the detail
-//                        page — never calculated twice, just reused)
-//   Hours Worked      → raw hours logged, for context
-// Recomputed live from Timesheet + Salary data every time a project
-// is selected — nothing here is entered or stored manually.
+// CLIENT DETAIL — a single client's own projects as a scoped card
+// grid, reusing the exact same buildProjectCard/renderProjectCardsInto
+// used by the main Project tab. "+ Add Project" is preset to this
+// client (same mechanism the old tree's "+ Add Project" used).
 // ══════════════════════════════════════════════════════════════
+function renderClientDetail(content, client) {
+  const isManager = CP_ROLE === 'manager';
+  const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === client.id));
 
-let CP_DASH_EXPANDED         = new Set(); // client IDs currently expanded in the tree
-let CP_DASH_SELECTED_PROJECT = null;      // currently selected project ID
-
-function renderClientPerformanceDashboard(content) {
   content.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:8px;">
-      <div>
-        <div style="font-size:16px;font-weight:700;color:var(--txt1);">🏢 Client Performance Dashboard</div>
-        <div style="font-size:12px;color:var(--txt2);">Compare each project's budget, employee effort, and hours — updates automatically as timesheets and salaries change.</div>
-      </div>
-      <button id="cpNewClientBtn2" style="background:var(--a1);color:#fff;border:none;
-        border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;">+ New Client</button>
+    <div style="margin-bottom:1rem;">
+      <button id="cpClientBack" class="cp-back-btn">← Back to Clients</button>
     </div>
 
-    <div style="display:flex;gap:1.25rem;align-items:flex-start;">
-      <div style="width:260px;flex-shrink:0;background:var(--surface1);border:1px solid var(--border);
-        border-radius:12px;padding:.8rem;max-height:640px;overflow-y:auto;">
-        <div id="cpClientTree"></div>
+    <div class="cp-tab-header">
+      <div>
+        <div class="cp-tab-title">🏢 ${esc(client.name)}</div>
+        <div class="cp-tab-sub">${esc(client.id)} · ${projects.length} project${projects.length !== 1 ? 's' : ''}</div>
       </div>
-      <div style="flex:1;min-width:0;" id="cpDashPanel"></div>
+      <div style="display:flex;gap:8px;">
+        ${isManager ? `<button id="cpClientDetailEdit" class="cp-btn-ghost">✏️ Edit Client</button>` : ''}
+        ${isManager ? `<button id="cpClientAddProject" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ Add Project</button>` : ''}
+      </div>
     </div>
+
+    ${projects.length === 0
+      ? `<div class="chart-empty">No projects yet for this client.${isManager ? ' Click “+ Add Project” to add one.' : ''}</div>`
+      : `<div class="cp-card-grid" id="cpClientProjectGrid"></div>`}
   `;
 
-  $('cpNewClientBtn2').addEventListener('click', () =>
-    openClientEditor(content, null, () => renderClientPerformanceDashboard(content)));
+  $('cpClientBack').addEventListener('click', () => renderClientCards(content));
+  $('cpClientDetailEdit')?.addEventListener('click', () =>
+    openClientEditor(content, client, () => renderClientDetail(content, client)));
+  $('cpClientAddProject')?.addEventListener('click', () =>
+    openProjectDetail(content, null, { onBack: () => renderClientDetail(content, client), presetClientId: client.id }));
 
-  renderClientTree(content);
-  renderDashPanel(content);
-}
-
-function renderClientTree(content) {
-  const tree = $('cpClientTree');
-  if (!tree) return;
-
-  if (!CP_CLIENTS.length) {
-    tree.innerHTML = `<div style="font-size:12px;color:var(--txt2);padding:.5rem;">No clients yet.</div>`;
-    return;
+  if (projects.length) {
+    renderProjectCardsInto(content, $('cpClientProjectGrid'), projects, () => renderClientDetail(content, client));
   }
-
-  const sortedClients = sortClientsByRecency(CP_CLIENTS);
-
-  tree.innerHTML = sortedClients.map(c => {
-    const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === c.id));
-    const isOpen   = CP_DASH_EXPANDED.has(c.id);
-    const isActive = clientHasActiveProject(c.id);
-    return `
-      <div style="margin-bottom:4px;">
-        <div style="display:flex;align-items:center;">
-          <button class="cp-tree-client" data-id="${esc(c.id)}" style="flex:1;display:flex;align-items:center;gap:6px;
-            background:none;border:none;text-align:left;padding:7px 8px;border-radius:8px;cursor:pointer;color:var(--txt1);">
-            <span style="font-size:10px;color:var(--txt2);width:10px;flex-shrink:0;">${isOpen ? '▾' : '▸'}</span>
-            ${isActive ? `<span title="Has an active project" style="width:7px;height:7px;border-radius:50%;
-              background:#34d399;flex-shrink:0;"></span>` : ''}
-            <span style="font-size:12.5px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.name)}</span>
-            <span style="font-size:10px;color:var(--txt2);flex-shrink:0;">${projects.length}</span>
-          </button>
-          <button class="cp-tree-client-edit" data-id="${esc(c.id)}" title="Edit client" style="flex-shrink:0;
-            background:none;border:none;color:var(--txt2);cursor:pointer;font-size:11px;padding:4px 6px;">✏️</button>
-        </div>
-        ${isOpen ? `
-          <div style="padding-left:20px;display:flex;flex-direction:column;gap:2px;margin-top:2px;margin-bottom:4px;">
-            ${projects.length === 0
-              ? `<div style="font-size:11px;color:var(--txt2);padding:4px 8px;">No projects yet.</div>`
-              : projects.map(p => `
-                <button class="cp-tree-project" data-project-id="${esc(p.projectId)}" style="text-align:left;
-                  background:${CP_DASH_SELECTED_PROJECT === p.projectId ? 'var(--a1)' : 'none'};
-                  color:${CP_DASH_SELECTED_PROJECT === p.projectId ? '#fff' : 'var(--txt2)'};
-                  border:none;border-radius:7px;padding:6px 8px;font-size:11.5px;cursor:pointer;
-                  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.projectName)}">${esc(p.projectName)}</button>`).join('')}
-            <button class="cp-tree-addproj" data-client-id="${esc(c.id)}" style="text-align:left;background:none;
-              border:none;color:var(--a1);font-size:11px;padding:6px 8px;cursor:pointer;">+ Add Project</button>
-          </div>` : ''}
-      </div>`;
-  }).join('');
-
-  tree.querySelectorAll('.cp-tree-client').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.id;
-      if (CP_DASH_EXPANDED.has(id)) CP_DASH_EXPANDED.delete(id); else CP_DASH_EXPANDED.add(id);
-      renderClientTree(content);
-    });
-  });
-  tree.querySelectorAll('.cp-tree-client-edit').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const client = CP_CLIENTS.find(c => c.id === btn.dataset.id);
-      openClientEditor(content, client, () => renderClientPerformanceDashboard(content));
-    });
-  });
-  tree.querySelectorAll('.cp-tree-project').forEach(btn => {
-    btn.addEventListener('click', () => {
-      CP_DASH_SELECTED_PROJECT = btn.dataset.projectId;
-      renderClientTree(content); // refresh highlight
-      renderDashPanel(content);
-    });
-  });
-  tree.querySelectorAll('.cp-tree-addproj').forEach(btn => {
-    btn.addEventListener('click', () => {
-      CP_DASH_EXPANDED.add(btn.dataset.clientId);
-      openProjectDetail(content, null, {
-        onBack: () => renderClientPerformanceDashboard(content),
-        presetClientId: btn.dataset.clientId,
-      });
-    });
-  });
-}
-
-async function renderDashPanel(content) {
-  const panel = $('cpDashPanel');
-  if (!panel) return;
-
-  if (!CP_DASH_SELECTED_PROJECT) {
-    panel.innerHTML = `<div class="chart-empty" style="margin-top:2rem;">Select a project on the left to see its performance.</div>`;
-    return;
-  }
-
-  const project = CP_PROJECTS.find(p => p.projectId === CP_DASH_SELECTED_PROJECT);
-  if (!project) {
-    panel.innerHTML = `<div class="chart-empty">Project not found.</div>`;
-    return;
-  }
-
-  panel.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Calculating…</span></div>`;
-  await ensureSalaryDataLoaded();
-
-  const result   = calculateProjectCost(project);
-  const budget   = result ? result.projectBudget : (parseFloat(project.projectConstant) || 0);
-  const efforts  = result ? result.totalCost : 0;
-  const hours    = result ? result.totalHours : 0;
-  const maxVal   = Math.max(budget, efforts, hours, 0.01);
-  const profit   = budget - efforts;
-  const isHealthy = profit >= 0;
-
-  const bar = (label, value, color, unit) => `
-    <div style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;">
-        <span style="color:var(--txt1);font-weight:600;">${label}</span>
-        <span style="color:var(--txt2);font-weight:600;">${value.toLocaleString('en-IN', { maximumFractionDigits: 1 })}${unit}</span>
-      </div>
-      <div style="background:var(--surface2);border-radius:7px;height:16px;overflow:hidden;">
-        <div style="height:100%;width:${Math.max((value / maxVal) * 100, value > 0 ? 2 : 0)}%;background:${color};border-radius:7px;transition:width .3s;"></div>
-      </div>
-    </div>`;
-
-  panel.innerHTML = `
-    <div class="cp-card" style="max-width:640px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.2rem;flex-wrap:wrap;gap:8px;">
-        <div style="font-weight:700;font-size:16px;color:var(--txt1);">📁 ${esc(project.projectName)}</div>
-        <button id="cpDashEditBtn" style="background:none;border:1px solid var(--border-md);color:var(--txt2);
-          border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;">✏️ Edit</button>
-      </div>
-      <div style="font-size:11.5px;color:var(--txt2);margin-bottom:1.3rem;">${esc(project.projectId)} · ${esc(project.status)}</div>
-
-      ${bar('Project Constant', budget, '#4f8ef7', '')}
-      ${bar('Employee Efforts', efforts, '#fbbf24', '')}
-      ${bar('Hours Worked', hours, '#34d399', 'h')}
-
-      <div style="margin-top:4px;background:${isHealthy ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)'};
-        border:1px solid ${isHealthy ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'};
-        border-radius:10px;padding:10px 12px;text-align:center;">
-        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">${isHealthy ? '📈 Healthy Margin' : '📉 Over Budget'}</div>
-        <div style="font-size:16px;font-weight:800;color:${isHealthy ? '#34d399' : '#f87171'};">
-          ${isHealthy ? '+' : '-'}${fmtCPRupees(Math.abs(profit))}</div>
-      </div>
-    </div>`;
-
-  $('cpDashEditBtn').addEventListener('click', () => {
-    openProjectDetail(content, project.projectId, { onBack: () => renderClientPerformanceDashboard(content) });
-  });
 }
 
 // ══════════════════════════════════════════════════════════════
-// PROJECT — list + role-aware detail/edit.
+// PROJECT — card grid + role-aware detail/edit. Shared by the main
+// Project tab (all projects) and Client Detail (scoped to one client)
+// via renderProjectCardsInto, so there is one project-card
+// implementation, not two.
 // ══════════════════════════════════════════════════════════════
 function renderProjectList(content) {
   const isManager = CP_ROLE === 'manager';
   const sortedProjects = sortProjectsByRecency(CP_PROJECTS);
 
   content.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:8px;">
+    <div class="cp-tab-header">
       <div>
-        <div style="font-size:16px;font-weight:700;color:var(--txt1);">📁 Projects</div>
-        <div style="font-size:12px;color:var(--txt2);">Projects received from clients — status and view progress. Not a task board.</div>
+        <div class="cp-tab-title">📁 Projects</div>
+        <div class="cp-tab-sub">Projects received from clients — status and view progress. Not a task board.</div>
       </div>
-      ${isManager ? `<button id="cpNewProjectBtn" style="background:var(--a1);color:#fff;border:none;
-        border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;">+ New Project</button>` : ''}
+      ${isManager ? `<button id="cpNewProjectBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Project</button>` : ''}
     </div>
 
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-          <thead>
-            <tr>
-              ${['Project Name','Project ID','Client','Status','Planned','Completed','Delivered'].map(h =>
-                `<th style="text-align:${['Planned','Completed','Delivered'].includes(h)?'right':'left'};padding:9px 12px;
-                  background:var(--surface2);color:var(--txt2);font-size:10.5px;text-transform:uppercase;
-                  letter-spacing:.04em;white-space:nowrap;">${h}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>
-            ${CP_PROJECTS.length === 0
-              ? `<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--txt2);">No projects yet.${isManager ? ' Click “+ New Project” to add one.' : ''}</td></tr>`
-              : sortedProjects.map(p => buildProjectRow(p)).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    ${sortedProjects.length === 0
+      ? `<div class="chart-empty">No projects yet.${isManager ? ' Click “+ New Project” to add one.' : ''}</div>`
+      : `<div class="cp-card-grid" id="cpProjectGrid"></div>`}
   `;
 
-  content.querySelectorAll('.cp-project-row').forEach(row => {
-    row.addEventListener('click', () => openProjectDetail(content, row.dataset.projectId));
-  });
   $('cpNewProjectBtn')?.addEventListener('click', () => openProjectDetail(content, null));
+
+  if (sortedProjects.length) {
+    renderProjectCardsInto(content, $('cpProjectGrid'), sortedProjects, () => renderProjectList(content));
+  }
 }
 
-function buildProjectRow(p) {
+// Renders a set of project cards into a given grid element. Renders
+// immediately without the Profit/Loss chip (so the grid isn't
+// blocked waiting on the salary fetch), then — for Manager only —
+// loads salary data once and re-renders with the chip filled in.
+// Team Leaders never see this chip at all (same permission boundary
+// as the rest of this module: they never receive Project
+// Constant/Value, so there's nothing to compute a profit chip from).
+async function renderProjectCardsInto(content, gridEl, projects, onBack) {
+  if (!gridEl) return;
+  const isManager = CP_ROLE === 'manager';
+
+  gridEl.innerHTML = projects.map(p => buildProjectCard(p, isManager, null)).join('');
+  wireProjectCards(content, gridEl, projects, onBack);
+
+  if (isManager) {
+    await ensureSalaryDataLoaded();
+    if (!document.body.contains(gridEl)) return; // user navigated away while this was loading
+    gridEl.innerHTML = projects.map(p => buildProjectCard(p, isManager, calculateProjectCost(p))).join('');
+    wireProjectCards(content, gridEl, projects, onBack);
+  }
+}
+
+function wireProjectCards(content, gridEl, projects, onBack) {
+  gridEl.querySelectorAll('.cp-project-view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const project = projects.find(p => p.projectId === btn.dataset.id);
+      if (project) openProjectDetail(content, project.projectId, { onBack });
+    });
+  });
+}
+
+function buildProjectCard(p, isManager, costResult) {
   const client = CP_CLIENTS.find(c => c.id === p.clientId);
   const meta   = CP_STATUS_META[p.status] || CP_STATUS_META['In Progress'];
+  const initials = (p.projectName || p.projectId || '?').trim().slice(0, 2).toUpperCase();
+
+  let profitBox = '';
+  if (isManager) {
+    if (costResult) {
+      const isProfit = costResult.profit >= 0;
+      profitBox = `
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">${isProfit ? 'Profit' : 'Loss'}</div>
+          <div class="cp-metric-val" style="color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(costResult.profit))}</div>
+        </div>`;
+    } else {
+      profitBox = `
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Profit</div>
+          <div class="cp-metric-val" style="color:var(--txt2);font-size:11px;font-weight:600;">Calculating…</div>
+        </div>`;
+    }
+  }
+
   return `
-    <tr class="cp-project-row" data-project-id="${esc(p.projectId)}" style="cursor:pointer;border-top:1px solid var(--border);">
-      <td style="padding:9px 12px;color:var(--txt1);font-weight:600;max-width:220px;overflow:hidden;
-        text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.projectName)}">${esc(p.projectName)}</td>
-      <td style="padding:9px 12px;color:var(--txt2);font-family:var(--fm);white-space:nowrap;">${esc(p.projectId)}</td>
-      <td style="padding:9px 12px;color:var(--txt2);white-space:nowrap;">${esc(client?.name || p.clientId || '—')}</td>
-      <td style="padding:9px 12px;white-space:nowrap;">
-        <span style="background:${meta.bg};color:${meta.fg};border-radius:20px;padding:2px 10px;font-size:10.5px;font-weight:700;">${esc(p.status)}</span>
-      </td>
-      <td style="padding:9px 12px;text-align:right;color:var(--txt1);">${p.plannedViews || 0}</td>
-      <td style="padding:9px 12px;text-align:right;color:var(--txt1);">${p.completedViews || 0}</td>
-      <td style="padding:9px 12px;text-align:right;color:var(--txt1);">${p.deliveredViews || 0}</td>
-    </tr>`;
+    <div class="cp-entity-card">
+      <div class="cp-entity-head">
+        <div class="cp-entity-avatar" style="background:linear-gradient(135deg,#fbbf24,#f97316);">${esc(initials)}</div>
+        <div class="cp-entity-titles">
+          <div class="cp-entity-name" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
+          <div class="cp-entity-id" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:.9rem;">
+        <span class="cp-status-pill" style="background:${meta.bg};color:${meta.fg};">${esc(p.status)}</span>
+      </div>
+
+      <div class="cp-entity-metrics">
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Planned</div>
+          <div class="cp-metric-val">${p.plannedViews || 0}</div>
+        </div>
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Completed</div>
+          <div class="cp-metric-val">${p.completedViews || 0}</div>
+        </div>
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Delivered</div>
+          <div class="cp-metric-val">${p.deliveredViews || 0}</div>
+        </div>
+        ${profitBox}
+      </div>
+
+      <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}">View Details →</button>
+    </div>`;
 }
 
 // ── DETAIL / EDIT — role-based permissions applied automatically:
@@ -673,9 +686,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
 
   content.innerHTML = `
     <div style="margin-bottom:1rem;">
-      <button id="cpProjBack" style="display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;
-        border:1px solid var(--border-md);background:var(--elevated);color:var(--txt2);font-size:13px;
-        font-weight:600;cursor:pointer;">← Back</button>
+      <button id="cpProjBack" class="cp-back-btn">← Back</button>
     </div>
 
     <div class="cp-card">
@@ -793,7 +804,6 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     await sheetGET({ action: 'saveProjectMaster', data: encodeURIComponent(JSON.stringify(payload)) });
     toast?.('s', isNew ? 'Project created' : 'Project updated', payload.projectName || originalProject.projectName || originalProject.projectId);
     await loadProjectData();
-    CP_DASH_SELECTED_PROJECT = payload.projectId || originalProject.projectId;
     if (typeof onDone === 'function') onDone(); else renderProjectList(content);
   } catch(err) {
     btn.disabled = false; btn.textContent = isNew ? 'Create Project' : 'Save Changes';
@@ -808,7 +818,6 @@ async function deleteProjectFromForm(content, project, onDone) {
     await sheetGET({ action: 'deleteProjectMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, projectId: project.projectId })) });
     toast?.('s', 'Project deleted', project.projectName || project.projectId);
     await loadProjectData();
-    if (CP_DASH_SELECTED_PROJECT === project.projectId) CP_DASH_SELECTED_PROJECT = null;
     if (typeof onDone === 'function') onDone(); else renderProjectList(content);
   } catch(err) {
     toast?.('e', 'Delete failed', err.message);
