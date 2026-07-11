@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════
 // MANAGER.JS — Manager Portal shell
-// Tabs: Employees | Salary | Client | Project
+// Tabs: Project | Employees | Salary | Client
 //
 // This file is ONLY a loading/navigation platform. It owns the
 // Employee module (timesheet data, employee cards, Employee Detail
@@ -8,22 +8,26 @@
 // Client or Project data itself. The Client and Project tabs simply
 // hand their content container to client-project.js:
 //
+//   Project   → client-project.js (renderProjectTab)  ← default tab
 //   Employees → this file (renderEmployeesTab)
 //   Salary    → salary.js (renderSalaryTab)
 //   Client    → client-project.js (renderClientTab)
-//   Project   → client-project.js (renderProjectTab)
 //
 // Master data (employees/clients/projects) is fetched once here and
 // the clients/projects portion is handed off to client-project.js via
 // ClientProjectAPI.ingestMasterData(), so there's a single shared
 // fetch instead of client-project.js re-requesting the same data.
+//
+// Desktop-only layout: no mobile breakpoints/media queries are used
+// anywhere in this file — grids are fixed-column, sized for a PC
+// screen.
 // ═══════════════════════════════════════════════════
 
 // ── STATE ─────────────────────────────────────────
 let MGR_DATA           = [];
 let MGR_EMPLOYEES      = [];
 
-let MGR_TAB            = 'employees';  // employees|salary|client|project
+let MGR_TAB            = 'project';    // project|client|employees|salary — Project is the default landing tab
 let MGR_RANGE          = 'week';
 let MGR_DAY_OFFSET     = 0;
 let MGR_SELECTED_MONTH = '';
@@ -88,10 +92,10 @@ function renderManagerPortal() {
     <!-- Top nav tabs -->
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
+        { id:'project',   icon:'📁', label:'Project'   },
+        { id:'client',    icon:'🏢', label:'Client'    },
         { id:'employees', icon:'👥', label:'Employees' },
-        { id:'salary',     icon:'💼', label:'Salary'    },
-        { id:'client',     icon:'🏢', label:'Client'    },
-        { id:'project',    icon:'📁', label:'Project'   },
+        { id:'salary',    icon:'💼', label:'Salary'    },
       ].map(t => `
         <button class="mgr-tab${MGR_TAB===t.id?' active':''}" data-tab="${t.id}" style="
           padding:8px 16px;border:none;background:none;cursor:pointer;
@@ -128,6 +132,12 @@ function renderMgrTab() {
   const content = $('mgrTabContent');
   if (!content) return;
 
+  if (MGR_TAB === 'project') {
+    if (typeof renderProjectTab === 'function') renderProjectTab(content);
+    else content.innerHTML = `<div class="chart-empty">Project module (client-project.js) is not loaded.</div>`;
+    return;
+  }
+
   if (MGR_TAB === 'employees') { renderEmployeesTab(content); return; }
 
   if (MGR_TAB === 'salary') {
@@ -139,12 +149,6 @@ function renderMgrTab() {
   if (MGR_TAB === 'client') {
     if (typeof renderClientTab === 'function') renderClientTab(content);
     else content.innerHTML = `<div class="chart-empty">Client module (client-project.js) is not loaded.</div>`;
-    return;
-  }
-
-  if (MGR_TAB === 'project') {
-    if (typeof renderProjectTab === 'function') renderProjectTab(content);
-    else content.innerHTML = `<div class="chart-empty">Project module (client-project.js) is not loaded.</div>`;
     return;
   }
 }
@@ -224,9 +228,13 @@ function renderEmpContent() {
 // ── EMPLOYEE CARDS ────────────────────────────────
 function renderEmpCards(content, worked, all) {
   const empMap = {};
-  MGR_EMPLOYEES.forEach(emp => {
+  // entryIndex = this employee's row position in the Employees sheet,
+  // in the order apiGetMasterData() returned them (top to bottom).
+  // Used to sort cards "most recently entered employee first" —
+  // higher index = added later = shown first.
+  MGR_EMPLOYEES.forEach((emp, idx) => {
     empMap[emp.id] = {
-      id: emp.id, name: emp.name, team: emp.team,
+      id: emp.id, name: emp.name, team: emp.team, entryIndex: idx,
       hours: 0, days: new Set(), leaves: 0,
       projectMap: {}, missedDays: [],
       monthHours: 0, monthDays: 0, monthLeaves: 0, monthNotLogged: 0,
@@ -293,23 +301,21 @@ function renderEmpCards(content, worked, all) {
     else if (todayDow === 0 || todayDow === 6)   emp.todayStatus = 'Weekend';
     else                                          emp.todayStatus = 'Working';
 
-    // Most recent activity date across this employee's ENTIRE history
-    // (not just the current range filter) — used to sort so the most
-    // recently active employee shows first, regardless of how many
-    // total hours they've logged in whatever range is selected.
+    // Kept for potential future use, but no longer the sort key —
+    // cards now sort by entryIndex (last entered first), not by
+    // recent timesheet activity. See below.
     emp.lastActivityDate = MGR_DATA
       .filter(e => e.empId === emp.id)
       .reduce((max, e) => (e.date > max ? e.date : max), '');
   });
 
-  const rows = Object.values(empMap).sort((a, b) => {
-    if (a.lastActivityDate !== b.lastActivityDate) return b.lastActivityDate.localeCompare(a.lastActivityDate);
-    return b.hours - a.hours; // tie-break: same last-activity day, higher hours first
-  });
+  // Most recently entered employee first (highest row position in the
+  // Employees sheet = added most recently).
+  const rows = Object.values(empMap).sort((a, b) => b.entryIndex - a.entryIndex);
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:.5rem;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1.25rem;margin-top:.5rem;">
       ${rows.map(emp => buildEmpCard(emp)).join('')}
     </div>`;
 

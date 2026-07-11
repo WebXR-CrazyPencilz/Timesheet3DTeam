@@ -66,6 +66,35 @@ const CP_STATUS_META = {
   'On Hold':     { bg: 'rgba(251,191,36,0.12)',  fg: '#fbbf24' },
 };
 
+// ── AUTOMATIC PROJECT COLORS ─────────────────────────────────
+// Every project gets a color automatically — no manual color field,
+// nothing to set or maintain. The color is derived from a hash of
+// the Project ID, so it's deterministic: the same project always
+// gets the same color on every render/reload, and different
+// projects spread across the palette without collisions being
+// likely for a normal-sized project list.
+const CP_PROJECT_PALETTE = [
+  '#4f8ef7', '#7c5cfc', '#34d399', '#fbbf24', '#f87171', '#22d3ee',
+  '#fb923c', '#a78bfa', '#f472b6', '#84cc16', '#38bdf8', '#4ade80',
+  '#facc15', '#fb7185', '#818cf8', '#2dd4bf',
+];
+
+function getColorForKey(key) {
+  const str = String(key || '');
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  }
+  return CP_PROJECT_PALETTE[hash % CP_PROJECT_PALETTE.length];
+}
+
+// Every project gets its own color (card avatar). Every employee also
+// gets their own color, used in the Team Hours bar on each project
+// card — the same employee gets the same color on every project's
+// bar, so it stays recognizable across cards.
+function getProjectColor(projectId)  { return getColorForKey('proj:' + projectId); }
+function getEmployeeColor(empId)     { return getColorForKey('emp:'  + empId); }
+
 // ── RECENCY HELPERS ──────────────────────────────────────────
 // Code.gs writes Created/Updated Date as e.g. "07 Jul 2026, 03:15:00 PM"
 // (Utilities.formatDate with 'dd MMM yyyy, hh:mm:ss a') — not directly
@@ -112,6 +141,27 @@ function getProjectLastActivity(project) {
 
 function sortProjectsByRecency(projects) {
   return projects.slice().sort((a, b) => getProjectLastActivity(b) - getProjectLastActivity(a));
+}
+
+// "Last entered first" — primarily ordered by Created Date (when the
+// project was actually added to Project Master). But most existing
+// projects are legacy rows from before that column existed, so their
+// createdDate is blank for all of them — comparing 0 to 0 is a no-op
+// and silently falls back to whatever order the sheet already had,
+// which is NOT "last entered first". Fix: any project with a real
+// timestamp always outranks one without (it's provably more recent —
+// the column didn't exist yet when the legacy rows were created), and
+// among projects that both lack a timestamp, fall back to entryIndex
+// (their row position in the Projects sheet, set in loadProjectData)
+// — since new projects are always appended, the last row is the most
+// recently entered one. Same fallback strategy used for Employees.
+function sortProjectsByCreated(projects) {
+  return projects.slice().sort((a, b) => {
+    const ta = parseAppTimestamp(a.createdDate);
+    const tb = parseAppTimestamp(b.createdDate);
+    if (ta !== tb) return tb - ta;
+    return (b.entryIndex || 0) - (a.entryIndex || 0);
+  });
 }
 
 // A client's "last activity" is the most recent activity across any
@@ -208,55 +258,55 @@ function ensureCPStyles() {
     }
 
     .cp-card-grid {
-      display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
-      gap:1.25rem;margin-top:.5rem;
+      display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+      gap:1.5rem;margin-top:.5rem;
     }
 
     .cp-entity-card {
-      background:var(--surface1);border:1px solid var(--border);border-radius:14px;
-      padding:1.1rem;display:flex;flex-direction:column;
+      background:var(--surface1);border:1px solid var(--border);border-radius:16px;
+      padding:1.5rem;display:flex;flex-direction:column;
     }
-    .cp-entity-head { display:flex;align-items:center;gap:10px;margin-bottom:.9rem; }
+    .cp-entity-head { display:flex;align-items:center;gap:12px;margin-bottom:1.1rem; }
     .cp-entity-avatar {
-      width:38px;height:38px;border-radius:50%;flex-shrink:0;
+      width:46px;height:46px;border-radius:50%;flex-shrink:0;
       background:linear-gradient(135deg,var(--a1),#7c5cfc);
       display:flex;align-items:center;justify-content:center;
-      font-weight:700;font-size:13px;color:#fff;
+      font-weight:700;font-size:15px;color:#fff;
     }
     .cp-entity-titles { flex:1;min-width:0; }
     .cp-entity-name {
-      font-weight:600;font-size:14px;color:var(--txt1);
+      font-weight:700;font-size:16px;color:var(--txt1);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
     .cp-entity-id {
-      font-size:11px;color:var(--txt2);
+      font-size:12px;color:var(--txt2);
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
 
     .cp-icon-btn {
       flex-shrink:0;background:none;border:none;color:var(--txt2);cursor:pointer;
-      font-size:13px;padding:4px 6px;border-radius:6px;
+      font-size:14px;padding:5px 7px;border-radius:6px;
     }
     .cp-icon-btn:hover { background:var(--surface2); }
 
     .cp-status-pill {
       display:inline-flex;align-items:center;gap:5px;border-radius:20px;
-      padding:4px 10px;font-size:11px;font-weight:700;
+      padding:5px 12px;font-size:11.5px;font-weight:700;
     }
     .cp-status-dot { width:6px;height:6px;border-radius:50%;flex-shrink:0; }
 
     .cp-entity-metrics {
-      display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.9rem;
+      display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1.1rem;
     }
-    .cp-metric-box { background:var(--surface2);border-radius:10px;padding:8px 12px; }
+    .cp-metric-box { background:var(--surface2);border-radius:10px;padding:10px 14px; }
     .cp-metric-label {
-      font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;
+      font-size:10.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px;
     }
-    .cp-metric-val { font-size:16px;font-weight:800;color:var(--txt1); }
+    .cp-metric-val { font-size:18px;font-weight:800;color:var(--txt1); }
 
     .cp-view-btn {
       align-self:flex-start;margin-top:auto;background:var(--a1);color:#fff;border:none;
-      border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer;
+      border-radius:7px;padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;
     }
   `;
   document.head.appendChild(style);
@@ -334,7 +384,13 @@ async function loadClientData() {
 }
 
 async function loadProjectData() {
-  CP_PROJECTS = await sheetGET({ action: 'getProjectMasterList', role: CP_ROLE });
+  // getProjectMasterList returns rows in sheet order (top to bottom),
+  // and Code.gs always appendRow()s new projects to the bottom — so
+  // this index doubles as "how recently was this project entered",
+  // used by sortProjectsByCreated as a fallback for legacy rows that
+  // have no real Created Date.
+  const projects = await sheetGET({ action: 'getProjectMasterList', role: CP_ROLE });
+  CP_PROJECTS = projects.map((p, idx) => ({ ...p, entryIndex: idx }));
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -505,7 +561,7 @@ function openClientEditor(content, client = null, onDone = null) {
 // ══════════════════════════════════════════════════════════════
 function renderClientDetail(content, client) {
   const isManager = CP_ROLE === 'manager';
-  const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === client.id));
+  const projects = sortProjectsByCreated(CP_PROJECTS.filter(p => p.clientId === client.id)); // last entered project first
 
   content.innerHTML = `
     <div style="margin-bottom:1rem;">
@@ -547,7 +603,7 @@ function renderClientDetail(content, client) {
 // ══════════════════════════════════════════════════════════════
 function renderProjectList(content) {
   const isManager = CP_ROLE === 'manager';
-  const sortedProjects = sortProjectsByRecency(CP_PROJECTS);
+  const sortedProjects = sortProjectsByCreated(CP_PROJECTS); // last entered project first
 
   content.innerHTML = `
     <div class="cp-tab-header">
@@ -605,6 +661,7 @@ function buildProjectCard(p, isManager, costResult) {
   const client = CP_CLIENTS.find(c => c.id === p.clientId);
   const meta   = CP_STATUS_META[p.status] || CP_STATUS_META['In Progress'];
   const initials = (p.projectName || p.projectId || '?').trim().slice(0, 2).toUpperCase();
+  const color  = getProjectColor(p.projectId);
 
   let profitBox = '';
   if (isManager) {
@@ -627,7 +684,7 @@ function buildProjectCard(p, isManager, costResult) {
   return `
     <div class="cp-entity-card">
       <div class="cp-entity-head">
-        <div class="cp-entity-avatar" style="background:linear-gradient(135deg,#fbbf24,#f97316);">${esc(initials)}</div>
+        <div class="cp-entity-avatar" style="background:${color};">${esc(initials)}</div>
         <div class="cp-entity-titles">
           <div class="cp-entity-name" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
           <div class="cp-entity-id" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
@@ -647,11 +704,12 @@ function buildProjectCard(p, isManager, costResult) {
           <div class="cp-metric-label">Completed</div>
           <div class="cp-metric-val">${p.completedViews || 0}</div>
         </div>
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">Delivered</div>
-          <div class="cp-metric-val">${p.deliveredViews || 0}</div>
-        </div>
         ${profitBox}
+      </div>
+
+      <div style="margin-bottom:.9rem;">
+        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Team Hours</div>
+        ${buildProjectHoursBar(p)}
       </div>
 
       <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}">View Details →</button>
@@ -671,7 +729,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
   const isNew = !projectId;
   const project = isNew
     ? { projectId: '', projectName: '', clientId: presetClientId, projectConstant: '', projectValue: 0,
-        plannedViews: 0, completedViews: 0, deliveredViews: 0, status: 'In Progress' }
+        plannedViews: 0, completedViews: 0, status: 'In Progress' }
     : CP_PROJECTS.find(p => p.projectId === projectId);
 
   if (!isNew && !project) { toast?.('e', 'Project not found', projectId); return; }
@@ -694,8 +752,8 @@ async function openProjectDetail(content, projectId, opts = {}) {
         ${isNew ? '📁 New Project' : '📁 ' + esc(project.projectName || project.projectId)}
       </div>
       <div style="font-size:11.5px;color:var(--txt2);margin-bottom:1.1rem;">
-        ${isManager ? 'You can edit project details and status. Progress fields are view-only here — Team Leader updates those.'
-                    : 'You can update view progress. Project details and status are view-only here — Manager updates those.'}
+        ${isManager ? 'You can edit project details, status, and view progress.'
+                    : 'You can update Views Completed. Project details and status are view-only here — Manager updates those.'}
       </div>
 
       <div class="cp-form-grid">
@@ -741,13 +799,8 @@ async function openProjectDetail(content, projectId, opts = {}) {
         </div>
 
         <div class="cp-form-field">
-          <label class="cp-flabel">Views Completed ${isManager ? '<span class="cp-hint">— view only</span>' : ''}</label>
-          <input class="cp-finput" id="cpCompleted" type="number" min="0" value="${project.completedViews || ''}" ${isTL ? '' : 'disabled'} placeholder="0"/>
-        </div>
-
-        <div class="cp-form-field">
-          <label class="cp-flabel">Views Delivered ${isManager ? '<span class="cp-hint">— view only</span>' : ''}</label>
-          <input class="cp-finput" id="cpDelivered" type="number" min="0" value="${project.deliveredViews || ''}" ${isTL ? '' : 'disabled'} placeholder="0"/>
+          <label class="cp-flabel">Views Completed</label>
+          <input class="cp-finput" id="cpCompleted" type="number" min="0" value="${project.completedViews || ''}" placeholder="0"/>
         </div>
       </div>
 
@@ -792,11 +845,11 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     payload.projectValue    = parseFloat($('cpValue').value) || 0;
     payload.plannedViews    = parseFloat($('cpPlanned').value) || 0;
     payload.status          = $('cpStatus').value;
+    payload.completedViews  = parseFloat($('cpCompleted').value) || 0;
     if (!isNew) payload.originalProjectId = originalProject.projectId;
   } else {
     payload.originalProjectId = originalProject.projectId;
     payload.completedViews    = parseFloat($('cpCompleted').value) || 0;
-    payload.deliveredViews    = parseFloat($('cpDelivered').value) || 0;
   }
 
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -861,6 +914,66 @@ function getProjectTeamActivity(project) {
   });
 
   return { months: monthBreakdown, totalMembers: allMembers.size, totalHours };
+}
+
+// All-time total hours per employee on this project (not broken down
+// by month — that's what the Team & Hours section on the detail page
+// is for). This feeds the compact segmented bar shown directly on
+// each project card.
+function getProjectEmployeeTotals(project) {
+  const entries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
+  const totals = {};
+  entries.forEach(e => {
+    totals[e.empId] = (totals[e.empId] || 0) + parseH(e.hours);
+  });
+  return Object.entries(totals)
+    .map(([empId, hours]) => {
+      const emp = CP_EMPLOYEES.find(x => x.id === empId);
+      return { empId, name: emp ? emp.name : empId, hours };
+    })
+    .filter(t => t.hours > 0)
+    .sort((a, b) => b.hours - a.hours);
+}
+
+// Hours → "Xh Ym" for the slider legend/tooltips.
+function fmtHM(hours) {
+  const totalMins = Math.round((hours || 0) * 60);
+  const h = Math.floor(totalMins / 60);
+  const m = totalMins % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+// A stacked segmented bar — one colored segment per employee, width
+// proportional to their share of total hours logged on this project.
+// Hovering a segment shows a native tooltip with that employee's name
+// and exact hours/minutes worked; a legend underneath makes the same
+// numbers visible without needing to hover at all.
+function buildProjectHoursBar(project) {
+  const totals = getProjectEmployeeTotals(project);
+  if (!totals.length) {
+    return `<div style="font-size:11px;color:var(--txt2);padding:2px 2px 0;">No hours logged yet</div>`;
+  }
+
+  const totalHours = totals.reduce((s, t) => s + t.hours, 0) || 1;
+  const segments = totals.map(t => {
+    const pct = Math.max((t.hours / totalHours) * 100, 1.5);
+    return `<div style="flex:0 0 ${pct}%;background:${getEmployeeColor(t.empId)};height:100%;"
+      title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+  }).join('');
+
+  const legend = totals.map(t => `
+    <div style="display:flex;align-items:center;gap:5px;">
+      <span style="width:7px;height:7px;border-radius:50%;background:${getEmployeeColor(t.empId)};flex-shrink:0;"></span>
+      <span style="font-size:10.5px;color:var(--txt1);font-weight:600;max-width:90px;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap;" title="${esc(t.name)}">${esc(t.name)}</span>
+      <span style="font-size:10.5px;color:var(--txt2);">${fmtHM(t.hours)}</span>
+    </div>`).join('');
+
+  return `
+    <div style="display:flex;border-radius:6px;overflow:hidden;height:14px;margin-bottom:8px;">${segments}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:7px 12px;">${legend}</div>`;
 }
 
 // State for the currently-open project's Team & Hours slider. Reset

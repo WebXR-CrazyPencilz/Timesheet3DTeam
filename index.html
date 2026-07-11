@@ -244,6 +244,17 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 
 /* main */
 .main{margin-top:var(--bar);padding:1.75rem 1.5rem;max-width:960px;margin-left:auto;margin-right:auto;width:100%}
+/* Manager & Team Leader portals get a much wider cap so PC screens
+   use the available space instead of sitting in a narrow centered
+   column. This has no effect on mobile — .main is already width:100%,
+   so on any screen narrower than the cap, the cap simply never
+   engages; the real responsive behavior still comes from the
+   @media(max-width:640px) block below and from the card grids'
+   own auto-fill columns collapsing naturally as the viewport shrinks.
+   The Employee (worker) portal keeps the original 960px — it's a
+   single-column timesheet view, not a dashboard, and was never part
+   of this widening. */
+#mgrPortal .main,#tlPortal .main{max-width:1680px;padding:1.75rem 2.5rem}
 .phdr{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.4rem;flex-wrap:wrap}
 .ptitle{font-family:var(--fd);font-size:1.55rem;font-weight:700;letter-spacing:-.03em}
 .psub{font-size:.78rem;color:var(--txt2);margin-top:.15rem}
@@ -456,6 +467,7 @@ tr:hover .del-btn{opacity:1}
 
 @media(max-width:640px){
   .main{padding:1.1rem .9rem}.bar{padding:0 .9rem}
+  #mgrPortal .main,#tlPortal .main{padding:1.1rem .9rem}
   .fcard{padding:1.1rem}.ptitle{font-size:1.25rem}
   .frow{grid-template-columns:1fr}.strip{flex-wrap:wrap}
   .sitem{border-right:none;border-bottom:1px solid var(--border);flex:1 1 45%}
