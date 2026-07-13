@@ -10,21 +10,36 @@
 //
 // Slots:
 //   🌅 Morning   09:30 → 13:00  (up to 4 sub-entries)
+//                allowed range extends down to 00:00 for early starts,
+//                but the default/display time stays 09:30
 //   🍽️ Lunch     13:00 → 13:45  (display only)
 //   ☀️ Afternoon 13:45 → 19:30  (up to 4 sub-entries)
-//   🌙 Extended  19:30 → 22:00  (optional)
+//                allowed range extends to 23:59 for late work, but
+//                the default/display time stays 19:30 (7:30 PM)
 // ═══════════════════════════════════════════════════
 
 let ENTRIES      = [];   // full history for table.js / chart.js
-let DAY_ENTRIES  = {};   // { morning:[], afternoon:[], extended:[] } — current date only
+let DAY_ENTRIES  = {};   // { morning:[], afternoon:[] } — current date only
 let CURRENT_DATE = '';   // YYYY-MM-DD
 
 const MAX_ENTRIES_PER_SLOT = 4;
 
 const SLOT_META = {
-  morning:   { label: 'Morning',   icon: '🌅', defaultIn: '09:30', defaultOut: '13:00', minTime: '08:30', maxTime: '13:00', displayMin: '09:30', color: '#f59e0b' },
-  afternoon: { label: 'Afternoon', icon: '☀️',  defaultIn: '13:45', defaultOut: '19:30', minTime: '13:30', maxTime: '20:00', displayMin: '13:45', color: '#3b82f6' },
-  extended:  { label: 'Extended',  icon: '🌙', defaultIn: '19:30', defaultOut: '22:00', minTime: '19:00', maxTime: '23:59', displayMin: '19:30', color: '#8b5cf6' },
+  // minTime/displayMin extended down to 00:00 so an early start can be
+  // logged — defaultIn is UNCHANGED, so a new entry still shows 09:30
+  // by default; the earlier range is only used if someone actually
+  // picks an earlier Time In. (minTime and displayMin previously
+  // disagreed — 08:30 vs 09:30 — which is why 07:30 showed as invalid
+  // in the picker AND would still have failed save validation; both
+  // are now the same value so the picker and the actual save rule
+  // always agree.)
+  morning:   { label: 'Morning',   icon: '🌅', defaultIn: '09:30', defaultOut: '13:00', minTime: '00:00', maxTime: '13:00', displayMin: '00:00', color: '#f59e0b' },
+  // maxTime extended to 23:59 (as close to midnight as a same-day
+  // time picker can represent) so anyone working late can log it —
+  // defaultIn/defaultOut are UNCHANGED, so a new entry still shows
+  // 13:45 - 19:30 (7:30 PM) by default; the later range is only used
+  // if someone actually picks a later Time Out.
+  afternoon: { label: 'Afternoon', icon: '☀️',  defaultIn: '13:45', defaultOut: '19:30', minTime: '13:30', maxTime: '23:59', displayMin: '13:45', color: '#3b82f6' },
 };
 
 // ── INIT ──────────────────────────────────────────
@@ -101,7 +116,7 @@ async function loadAndRenderDay(date) {
   try {
     const data = await apiGetDaySlots(USER.id, date);
 
-    DAY_ENTRIES = { morning: [], afternoon: [], extended: [] };
+    DAY_ENTRIES = { morning: [], afternoon: [] };
     const seen  = {};
 
     (data.entries || []).forEach(e => {
@@ -135,16 +150,10 @@ function renderSlots() {
   const container = $('slotsContainer');
   if (!container) return;
 
-  const hasExtended = DAY_ENTRIES.extended.length > 0;
-
   container.innerHTML = `
     ${renderSlotBlock('morning')}
     ${renderLunchBlock()}
     ${renderSlotBlock('afternoon')}
-    ${renderExtendedToggle(hasExtended)}
-    <div id="extendedBlock" style="${hasExtended ? '' : 'display:none'}">
-      ${renderSlotBlock('extended')}
-    </div>
   `;
 }
 
@@ -322,30 +331,6 @@ function renderLunchBlock() {
     <span class="lunch-time">1:00 PM – 1:45 PM</span>
     <span class="lunch-badge">45 min</span>
   </div>`;
-}
-
-// ── EXTENDED TOGGLE ───────────────────────────────
-function renderExtendedToggle(isOpen) {
-  return `
-  <button class="extended-toggle" id="extToggle"
-    onclick="toggleExtended()" aria-expanded="${isOpen}">
-    ${isOpen ? '▲ Hide Extended Hours' : '🌙 + Add Extended Hours (7:30 PM – 10:00 PM)'}
-  </button>`;
-}
-
-function toggleExtended() {
-  const block  = $('extendedBlock');
-  const toggle = $('extToggle');
-  if (!block) return;
-  const isHidden = block.style.display === 'none';
-  block.style.display = isHidden ? 'block' : 'none';
-  toggle.setAttribute('aria-expanded', isHidden);
-  toggle.textContent = isHidden
-    ? '▲ Hide Extended Hours'
-    : '🌙 + Add Extended Hours (7:30 PM – 10:00 PM)';
-  if (isHidden && DAY_ENTRIES.extended.length === 0) {
-    block.innerHTML = renderSlotBlock('extended');
-  }
 }
 
 // ── ADD / REMOVE ENTRY ROW ────────────────────────

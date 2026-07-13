@@ -60,6 +60,11 @@ let CP_MASTER_LOADED  = false;  // did the active portal already forward master 
 
 const CP_STATUSES = ['In Progress', 'Completed', 'On Hold'];
 
+// Manager Notes / Team Leader Notes are capped at this length (both
+// via the textarea's maxlength attribute and the live counter next
+// to it) — short, at-a-glance remarks, not a full activity log.
+const CP_NOTES_MAX_LENGTH = 200;
+
 const CP_STATUS_META = {
   'In Progress': { bg: 'rgba(79,142,247,0.12)',  fg: '#4f8ef7' },
   'Completed':   { bg: 'rgba(52,211,153,0.12)',  fg: '#34d399' },
@@ -226,7 +231,7 @@ function ensureCPStyles() {
     }
     .cp-card {
       background:var(--surface1);border:1px solid var(--border);border-radius:14px;
-      padding:1.25rem;max-width:560px;margin-bottom:1.25rem;
+      padding:1.25rem;width:100%;box-sizing:border-box;margin-bottom:1.25rem;
     }
     .cp-form-field { display:flex;flex-direction:column;gap:2px;margin-bottom:.9rem; }
     .cp-form-grid {
@@ -260,6 +265,20 @@ function ensureCPStyles() {
     .cp-card-grid {
       display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
       gap:1.5rem;margin-top:.5rem;
+    }
+    /* Main Project tab (the landing page) — fixed 2 cards per row
+       instead of auto-fill, so each card gets much more width to work
+       with. Scoped to #cpProjectGrid only: Client cards and a
+       client's own scoped project grid on the Client Detail page
+       keep the denser auto-fill layout — this was requested
+       specifically for the front-page Project listing. */
+    #cpProjectGrid {
+      grid-template-columns:repeat(2,1fr);
+    }
+    /* Client grid — one client per row, full width, so there's room
+       for the per-project performance candles inside each card. */
+    #cpClientGrid {
+      grid-template-columns:1fr;
     }
 
     .cp-entity-card {
@@ -399,7 +418,7 @@ async function loadProjectData() {
 // Clicking a card opens a Client Detail page (that client's own
 // projects, scoped, as their own card grid).
 // ══════════════════════════════════════════════════════════════
-function renderClientCards(content) {
+async function renderClientCards(content) {
   const isManager = CP_ROLE === 'manager';
   const sorted = sortClientsByRecency(CP_CLIENTS);
 
@@ -414,12 +433,29 @@ function renderClientCards(content) {
 
     ${sorted.length === 0
       ? `<div class="chart-empty">No clients yet.${isManager ? ' Click “+ New Client” to add one.' : ''}</div>`
-      : `<div class="cp-card-grid">${sorted.map(c => buildClientCard(c, isManager)).join('')}</div>`}
+      : `<div class="cp-card-grid" id="cpClientGrid">${sorted.map(c => buildClientCard(c, isManager, null)).join('')}</div>`}
   `;
 
   $('cpNewClientBtn')?.addEventListener('click', () =>
     openClientEditor(content, null, () => renderClientCards(content)));
 
+  wireClientCardEvents(content);
+
+  // Performance candles need each project's cost (Constant vs. actual
+  // employee cost), which needs salary data — same two-phase pattern
+  // used on the Project tab: render immediately with hours-only
+  // candles, then fill in Constant/Value/Profit once salary data has
+  // loaded, without blocking the initial view on that fetch.
+  if (isManager && sorted.length) {
+    await ensureSalaryDataLoaded();
+    const grid = $('cpClientGrid');
+    if (!grid || !document.body.contains(grid)) return; // navigated away while this was loading
+    grid.innerHTML = sorted.map(c => buildClientCard(c, isManager, buildClientCostMap(c))).join('');
+    wireClientCardEvents(content);
+  }
+}
+
+function wireClientCardEvents(content) {
   content.querySelectorAll('.cp-client-view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const client = CP_CLIENTS.find(c => c.id === btn.dataset.id);
@@ -435,7 +471,18 @@ function renderClientCards(content) {
   });
 }
 
-function buildClientCard(client, isManager) {
+// Cost for every one of this client's projects, keyed by Project ID —
+// computed once per client rather than inline per-candle, so
+// buildClientCandleChart just does a lookup.
+function buildClientCostMap(client) {
+  const map = {};
+  CP_PROJECTS.filter(p => p.clientId === client.id).forEach(p => {
+    map[p.projectId] = calculateProjectCost(p);
+  });
+  return map;
+}
+
+function buildClientCard(client, isManager, costMap) {
   const initials = client.name.split(' ').map(w => w[0]).filter(Boolean).join('').toUpperCase().slice(0, 2) || '?';
   const isActive = clientHasActiveProject(client.id);
   const clientProjects = CP_PROJECTS.filter(p => p.clientId === client.id);
@@ -462,7 +509,7 @@ function buildClientCard(client, isManager) {
         </span>
       </div>
 
-      <div class="cp-entity-metrics">
+      <div class="cp-entity-metrics" style="grid-template-columns:1fr 1fr;max-width:400px;">
         <div class="cp-metric-box">
           <div class="cp-metric-label">Projects</div>
           <div class="cp-metric-val">${clientProjects.length}</div>
@@ -473,8 +520,76 @@ function buildClientCard(client, isManager) {
         </div>
       </div>
 
+      <div style="margin:1rem 0;">
+        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Project Performance</div>
+        ${buildClientCandleChart(client, clientProjects, isManager, costMap)}
+      </div>
+
       <button class="cp-view-btn cp-client-view-btn" data-id="${esc(client.id)}">View Projects →</button>
     </div>`;
+}
+
+// One "candle" per project: a vertical stacked bar whose fill height
+// (relative to the client's own busiest project) represents total
+// hours logged, and whose segments — one color per employee, reusing
+// the same getEmployeeColor used on Project cards' Team Hours bar —
+// show who contributed how much. Below each candle: the project's
+// Constant, Value, and Profit/Loss (Manager only — Team Leaders still
+// see the hours candle itself, just not the money figures, same
+// boundary enforced everywhere else Project Constant/Value appears).
+function buildClientCandleChart(client, projects, isManager, costMap) {
+  if (!projects.length) {
+    return `<div style="font-size:11px;color:var(--txt2);">No projects yet for this client.</div>`;
+  }
+
+  const perProject = projects.map(p => {
+    const totals = getProjectEmployeeTotals(p);
+    const totalHours = totals.reduce((s, t) => s + t.hours, 0);
+    return { project: p, totals, totalHours };
+  });
+  const maxHours = Math.max(...perProject.map(x => x.totalHours), 0.01);
+
+  const candles = perProject.map(({ project: p, totals, totalHours }) => {
+    const fillPct = totalHours > 0 ? Math.max((totalHours / maxHours) * 100, 5) : 0;
+    const segments = totals.map(t => {
+      const segPct = (t.hours / totalHours) * 100;
+      return `<div style="width:100%;height:${segPct}%;background:${getEmployeeColor(t.empId)};"
+        title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+    }).join('');
+
+    let moneyHtml = '';
+    if (isManager) {
+      const constant = parseFloat(p.projectConstant) || 0;
+      const value    = parseFloat(p.projectValue) || 0;
+      const cost     = costMap ? costMap[p.projectId] : null;
+
+      const perfHtml = cost
+        ? (() => {
+            const isProfit = cost.profit >= 0;
+            return `<div style="font-size:9.5px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(cost.profit))}</div>`;
+          })()
+        : `<div style="font-size:9px;color:var(--txt2);">Calculating…</div>`;
+
+      moneyHtml = `
+        <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">C: ${fmtCPRupees(constant)}</div>
+        <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">V: ${fmtCPRupees(value)}</div>
+        ${perfHtml}`;
+    }
+
+    return `
+      <div style="flex:0 0 68px;display:flex;flex-direction:column;align-items:center;gap:5px;">
+        <div style="width:26px;height:88px;background:var(--surface2);border-radius:6px;overflow:hidden;
+          display:flex;flex-direction:column-reverse;" title="${esc(p.projectName || p.projectId)}: ${fmtHM(totalHours)}">
+          <div style="width:100%;height:${fillPct}%;display:flex;flex-direction:column-reverse;">${segments}</div>
+        </div>
+        <div style="font-size:9.5px;color:var(--txt1);font-weight:600;text-align:center;max-width:68px;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.projectName || p.projectId)}">${esc(p.projectId)}</div>
+        <div style="font-size:9px;color:var(--txt2);">${fmtHM(totalHours)}</div>
+        ${moneyHtml}
+      </div>`;
+  }).join('');
+
+  return `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;align-items:flex-end;">${candles}</div>`;
 }
 
 // Create (no client passed) or rename (client passed) — Manager only,
@@ -712,7 +827,45 @@ function buildProjectCard(p, isManager, costResult) {
         ${buildProjectHoursBar(p)}
       </div>
 
+      <div style="margin-bottom:.9rem;">
+        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Timeline</div>
+        ${buildProjectTimelineMini(p)}
+      </div>
+
+      ${buildProjectNotesPreview(p)}
+
       <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}">View Details →</button>
+    </div>`;
+}
+
+// Two separate notes fields, each owned by its own role (Manager
+// writes Manager Notes, Team Leader writes Team Leader Notes — see
+// Code.gs's saveProjectMaster). Both are shown to both roles here —
+// they aren't financial data like Project Constant/Value, so there's
+// no reason to hide either one — but each is only ever EDITED by its
+// owner, via the Project Detail form. A note that hasn't been written
+// yet shows an explicit "No notes yet" placeholder rather than being
+// left blank, so it's clear the field exists and simply hasn't been
+// filled in.
+function buildProjectNotesPreview(p) {
+  const mgrNote = (p.managerNotes || '').trim();
+  const tlNote  = (p.teamLeaderNotes || '').trim();
+
+  const box = (label, text) => `
+    <div class="cp-metric-box">
+      <div class="cp-metric-label">${label}</div>
+      <div style="font-size:11.5px;color:${text ? 'var(--txt1)' : 'var(--txt2)'};font-style:${text ? 'normal' : 'italic'};
+        overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;margin-top:2px;"
+        title="${esc(text)}">${esc(text || 'No notes yet')}</div>
+    </div>`;
+
+  return `
+    <div style="margin-bottom:.9rem;">
+      <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Notes</div>
+      <div class="cp-entity-metrics" style="margin-bottom:0;">
+        ${box('Manager', mgrNote)}
+        ${box('Team Leader', tlNote)}
+      </div>
     </div>`;
 }
 
@@ -729,7 +882,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
   const isNew = !projectId;
   const project = isNew
     ? { projectId: '', projectName: '', clientId: presetClientId, projectConstant: '', projectValue: 0,
-        plannedViews: 0, completedViews: 0, status: 'In Progress' }
+        plannedViews: 0, completedViews: 0, status: 'In Progress', managerNotes: '', teamLeaderNotes: '' }
     : CP_PROJECTS.find(p => p.projectId === projectId);
 
   if (!isNew && !project) { toast?.('e', 'Project not found', projectId); return; }
@@ -742,11 +895,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
     try { suggestedId = (await sheetGET({ action: 'getNextProjectId' })) || ''; } catch(e) { /* fine, manager types it manually */ }
   }
 
-  content.innerHTML = `
-    <div style="margin-bottom:1rem;">
-      <button id="cpProjBack" class="cp-back-btn">← Back</button>
-    </div>
-
+  const formCard = `
     <div class="cp-card">
       <div style="font-weight:700;font-size:16px;color:var(--txt1);margin-bottom:.2rem;">
         ${isNew ? '📁 New Project' : '📁 ' + esc(project.projectName || project.projectId)}
@@ -804,6 +953,22 @@ async function openProjectDetail(content, projectId, opts = {}) {
         </div>
       </div>
 
+      <div class="cp-form-field" style="margin-top:.2rem;">
+        <label class="cp-flabel">Manager Notes ${isManager ? '' : '<span class="cp-hint">— view only</span>'}</label>
+        <textarea class="cp-finput" id="cpMgrNotes" rows="2" maxlength="${CP_NOTES_MAX_LENGTH}" ${isManager ? '' : 'disabled'}
+          oninput="updateCPNotesCount('cpMgrNotes','cpMgrNotesCount')"
+          placeholder="${isManager ? 'Notes only you can edit…' : ''}">${esc(project.managerNotes)}</textarea>
+        ${isManager ? `<div id="cpMgrNotesCount" style="text-align:right;font-size:10px;color:var(--txt2);margin-top:2px;">${project.managerNotes.length}/${CP_NOTES_MAX_LENGTH}</div>` : ''}
+      </div>
+
+      <div class="cp-form-field">
+        <label class="cp-flabel">Team Leader Notes ${isTL ? '' : '<span class="cp-hint">— view only</span>'}</label>
+        <textarea class="cp-finput" id="cpTlNotes" rows="2" maxlength="${CP_NOTES_MAX_LENGTH}" ${isTL ? '' : 'disabled'}
+          oninput="updateCPNotesCount('cpTlNotes','cpTlNotesCount')"
+          placeholder="${isTL ? 'Notes only you can edit…' : ''}">${esc(project.teamLeaderNotes)}</textarea>
+        ${isTL ? `<div id="cpTlNotesCount" style="text-align:right;font-size:10px;color:var(--txt2);margin-top:2px;">${project.teamLeaderNotes.length}/${CP_NOTES_MAX_LENGTH}</div>` : ''}
+      </div>
+
       <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:.4rem;">
         ${(!isNew && isManager)
           ? `<button id="cpDeleteBtn" style="background:none;border:1px solid rgba(248,113,113,0.4);
@@ -812,16 +977,39 @@ async function openProjectDetail(content, projectId, opts = {}) {
         <button id="cpSaveBtn" style="background:var(--a1);color:#fff;border:none;border-radius:8px;
           padding:8px 18px;font-size:12.5px;font-weight:700;cursor:pointer;">${isNew ? 'Create Project' : 'Save Changes'}</button>
       </div>
-    </div>
+    </div>`;
 
-    ${!isNew ? `<div id="cpTeamSection"></div>` : ''}
-    ${(!isNew && isManager) ? `<div id="cpCostSection"></div>` : ''}
+  // Existing projects get a two-column layout: the form stays a fixed,
+  // readable width on the left, and Timeline/Team Hours/Cost & Profit
+  // stack in the remaining space on the right — instead of everything
+  // stacking in one narrow centered column with the rest of a PC
+  // screen sitting empty. A brand-new (not-yet-created) project has
+  // none of those sections yet, so it just gets the form alone at a
+  // sensible width.
+  const bodyHtml = isNew
+    ? `<div style="max-width:620px;">${formCard}</div>`
+    : `
+      <div style="display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
+        <div>${formCard}</div>
+        <div style="display:flex;flex-direction:column;gap:1.25rem;">
+          <div id="cpTimelineSection"></div>
+          <div id="cpTeamSection"></div>
+          ${isManager ? `<div id="cpCostSection"></div>` : ''}
+        </div>
+      </div>`;
+
+  content.innerHTML = `
+    <div style="margin-bottom:1rem;">
+      <button id="cpProjBack" class="cp-back-btn">← Back</button>
+    </div>
+    ${bodyHtml}
   `;
 
   $('cpProjBack').addEventListener('click', goBack);
   $('cpSaveBtn').addEventListener('click', () => saveProjectFromForm(content, isNew, project, goBack));
   $('cpDeleteBtn')?.addEventListener('click', () => deleteProjectFromForm(content, project, goBack));
 
+  if (!isNew) renderProjectTimelineSection(project);
   if (!isNew) renderProjectTeamSection(project);
   if (!isNew && isManager) renderProjectCostSection(project);
 }
@@ -846,10 +1034,12 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     payload.plannedViews    = parseFloat($('cpPlanned').value) || 0;
     payload.status          = $('cpStatus').value;
     payload.completedViews  = parseFloat($('cpCompleted').value) || 0;
+    payload.managerNotes    = $('cpMgrNotes').value.trim();
     if (!isNew) payload.originalProjectId = originalProject.projectId;
   } else {
     payload.originalProjectId = originalProject.projectId;
     payload.completedViews    = parseFloat($('cpCompleted').value) || 0;
+    payload.teamLeaderNotes   = $('cpTlNotes').value.trim();
   }
 
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -974,6 +1164,153 @@ function buildProjectHoursBar(project) {
   return `
     <div style="display:flex;border-radius:6px;overflow:hidden;height:14px;margin-bottom:8px;">${segments}</div>
     <div style="display:flex;flex-wrap:wrap;gap:7px 12px;">${legend}</div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROJECT TIMELINE — month-by-month activity from when the project
+// actually started through the current month, including idle months
+// with zero hours (so gaps in activity are visible, not hidden).
+// Shown in TWO places: a compact sparkline on every project card
+// (main Project tab AND Client Detail's scoped grid, since both
+// reuse buildProjectCard), and a fuller strip on the Project Detail
+// page. Visible to both roles — like Team & Hours, this is activity
+// data, not financial data, so it isn't gated behind isManager.
+// ══════════════════════════════════════════════════════════════
+
+// Created Date -> 'YYYY-MM', using the same exact-format parser the
+// rest of this file already relies on (parseAppTimestamp).
+function monthFromAppTimestamp(str) {
+  const ts = parseAppTimestamp(str);
+  if (!ts) return null;
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+// 'YYYY-MM' -> the following month, as 'YYYY-MM'.
+function addOneMonthStr(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const d = new Date(y, m, 1); // JS Date month is 0-based, so passing the 1-based `m` directly lands on the next month
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function fmtMonthShort(monthKey) {
+  return new Date(monthKey + '-01').toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+}
+
+// Builds the full month range for a project — from its true starting
+// point through the current month — with hours (and contributor
+// count) for every month, including zeros for idle months.
+//
+// "Starting point" = the EARLIER of (a) the first month any hours
+// were actually logged against it, and (b) its Created Date month —
+// covering both the common case (work started when the project was
+// created) and the edge case (a legacy project whose Created Date
+// column was backfilled after work had already begun, or vice versa).
+function getProjectMonthlyTimeline(project) {
+  const entries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
+
+  let earliestMonth = null;
+  entries.forEach(e => {
+    const m = (e.date || '').slice(0, 7);
+    if (m && (!earliestMonth || m < earliestMonth)) earliestMonth = m;
+  });
+  const createdMonth = monthFromAppTimestamp(project.createdDate);
+  if (createdMonth && (!earliestMonth || createdMonth < earliestMonth)) earliestMonth = createdMonth;
+
+  if (!earliestMonth) return { months: [], maxHours: 0 }; // no activity and no known creation date
+
+  const nowMonth = todayStr().slice(0, 7);
+  const byMonth = {}; // { 'YYYY-MM': { hours, members:Set } }
+  entries.forEach(e => {
+    const m = (e.date || '').slice(0, 7);
+    if (!m) return;
+    if (!byMonth[m]) byMonth[m] = { hours: 0, members: new Set() };
+    byMonth[m].hours += parseH(e.hours);
+    byMonth[m].members.add(e.empId);
+  });
+
+  const months = [];
+  let cursor = earliestMonth;
+  let guard = 0; // safety cap (20 years) against a corrupted date producing a runaway loop
+  while (cursor <= nowMonth && guard < 240) {
+    const bucket = byMonth[cursor];
+    months.push({ month: cursor, hours: bucket ? bucket.hours : 0, memberCount: bucket ? bucket.members.size : 0 });
+    cursor = addOneMonthStr(cursor);
+    guard++;
+  }
+
+  const maxHours = Math.max(...months.map(m => m.hours), 0.01);
+  return { months, maxHours };
+}
+
+// Compact sparkline for the project card — one thin bar per month,
+// height proportional to that month's hours, idle months shown as
+// bare stubs. Hover any bar for the exact month + hours/minutes.
+function buildProjectTimelineMini(project) {
+  const { months, maxHours } = getProjectMonthlyTimeline(project);
+  if (!months.length) {
+    return `<div style="font-size:11px;color:var(--txt2);padding:2px 2px 0;">No activity yet</div>`;
+  }
+
+  const bars = months.map(m => {
+    const pct = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 10) : 6;
+    return `
+      <div style="flex:0 0 9px;display:flex;flex-direction:column;justify-content:flex-end;height:32px;"
+        title="${esc(fmtMonthShort(m.month))}: ${fmtHM(m.hours)}">
+        <div style="width:100%;height:${pct}%;border-radius:2px;
+          background:${m.hours > 0 ? 'var(--a1)' : 'var(--border-md)'};"></div>
+      </div>`;
+  }).join('');
+
+  return `<div style="display:flex;align-items:flex-end;gap:3px;overflow-x:auto;padding-bottom:2px;">${bars}</div>`;
+}
+
+// Fuller version for the Project Detail page — labeled month columns
+// with a bar and the exact hours underneath, horizontally scrollable
+// for projects with a long history. The current month is outlined so
+// "where we are now" is obvious at a glance.
+function renderProjectTimelineSection(project) {
+  const el = $('cpTimelineSection');
+  if (!el) return;
+
+  const { months, maxHours } = getProjectMonthlyTimeline(project);
+  if (!months.length) {
+    el.innerHTML = `
+      <div class="cp-card">
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">📅 Project Timeline</div>
+        <div style="font-size:12.5px;color:var(--txt2);">No activity logged yet, and no creation date on record to start a timeline from.</div>
+      </div>`;
+    return;
+  }
+
+  const nowMonth      = todayStr().slice(0, 7);
+  const startLabel    = fmtCPMonthLabel(months[0].month);
+  const totalHours    = months.reduce((s, m) => s + m.hours, 0);
+  const activeMonths  = months.filter(m => m.hours > 0).length;
+
+  const columns = months.map(m => {
+    const pct   = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 4) : 0;
+    const isNow = m.month === nowMonth;
+    return `
+      <div style="flex:0 0 56px;display:flex;flex-direction:column;align-items:center;gap:6px;"
+        title="${esc(fmtCPMonthLabel(m.month))}: ${fmtHM(m.hours)}${m.memberCount ? ' · ' + m.memberCount + ' member' + (m.memberCount !== 1 ? 's' : '') : ''}">
+        <div style="font-size:9.5px;color:var(--txt2);font-weight:600;white-space:nowrap;">${esc(fmtMonthShort(m.month))}</div>
+        <div style="width:22px;height:70px;background:var(--surface2);border-radius:6px;display:flex;
+          align-items:flex-end;overflow:hidden;${isNow ? 'outline:1.5px solid var(--a1);outline-offset:1px;' : ''}">
+          <div style="width:100%;height:${pct}%;background:var(--a1);border-radius:6px;"></div>
+        </div>
+        <div style="font-size:9.5px;color:${m.hours > 0 ? 'var(--txt1)' : 'var(--txt2)'};font-weight:${m.hours > 0 ? '700' : '400'};">${m.hours > 0 ? fmtHM(m.hours) : '—'}</div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cp-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:6px;">
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);">📅 Project Timeline</div>
+        <div style="font-size:11.5px;color:var(--txt2);">Since ${esc(startLabel)} · ${activeMonths}/${months.length} active month${months.length !== 1 ? 's' : ''} · ${fmtHM(totalHours)} total</div>
+      </div>
+      <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;">${columns}</div>
+    </div>`;
 }
 
 // State for the currently-open project's Team & Hours slider. Reset
@@ -1178,6 +1515,16 @@ function fmtCPMonthLabel(monthKey) {
 function fmtCPRupees(n) {
   const v = parseFloat(n) || 0;
   return '₹' + v.toLocaleString('en-IN', { maximumFractionDigits: 1 });
+}
+
+// Updates the "X/200" counter under a notes textarea as the person
+// types. maxlength on the textarea itself already prevents typing
+// past the cap — this is just the visible readout.
+function updateCPNotesCount(textareaId, counterId) {
+  const ta = document.getElementById(textareaId);
+  const el = document.getElementById(counterId);
+  if (!ta || !el) return;
+  el.textContent = `${ta.value.length}/${CP_NOTES_MAX_LENGTH}`;
 }
 
 // ══════════════════════════════════════════════════════════════

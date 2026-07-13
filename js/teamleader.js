@@ -1,8 +1,25 @@
 // ═══════════════════════════════════════════════════
-// TEAMLEADER.JS — Team Leader Portal
-// Tabs: Employees | Projects
-// Access: All employees, force leave, project hours + resources
-// No financial data (that's manager only)
+// TEAMLEADER.JS — Team Leader Portal shell
+// Tabs: Project | Client | Employees
+//
+// Like manager.js, this file is ONLY a loading/navigation platform
+// for its own Employees tab — Project and Client are handed off
+// wholesale to client-project.js, the single shared module that owns
+// everything about Clients and Projects (cards, per-project "candle"
+// performance charts, Manager/Team Leader Notes, Timeline, Team &
+// Hours). That gives the Team Leader the exact same Project/Client
+// experience as the Manager Portal, automatically, with no separate
+// implementation to maintain — Project Constant/Value and
+// Profit/Loss still never appear here, the same permission boundary
+// client-project.js already enforces (backend-checked in Code.gs,
+// not just hidden in this UI).
+//
+//   Project   → client-project.js (renderProjectTab)  ← default tab
+//   Client    → client-project.js (renderClientTab)
+//   Employees → this file (renderTLEmployeesTab)
+//
+// Access: all employees, force leave, project/client cards + hours.
+// No financial data (Project Constant/Value/Profit — Manager only).
 // ═══════════════════════════════════════════════════
 
 // ── STATE ─────────────────────────────────────────
@@ -11,7 +28,7 @@ let TL_EMPLOYEES   = [];
 let TL_CLIENTS     = [];
 let TL_PROJECTS    = [];
 
-let TL_TAB         = 'employees';   // employees | projects
+let TL_TAB         = 'project';    // project|client|employees — Project is the default landing tab, matching Manager
 let TL_RANGE       = 'week';
 let TL_DAY_OFFSET  = 0;
 let TL_MONTH       = '';
@@ -28,9 +45,6 @@ async function initTeamLeader() {
   const container = $('tlApp');
   if (!container) return;
 
-  const av = $('tlAv');
-  if (av) av.textContent = 'TL';
-
   container.innerHTML = `<div class="mgr-loading">
     <div class="slot-spinner"></div>
     <span>Loading team data…</span>
@@ -42,6 +56,14 @@ async function initTeamLeader() {
     TL_CLIENTS   = master.clients   || [];
     TL_PROJECTS  = master.projects  || [];
 
+    // Forward master data to client-project.js — without this, its
+    // Project/Client cards can't resolve employee names or populate
+    // the Team Hours / candle charts (CP_EMPLOYEES / CP_TIMESHEET_DATA
+    // are only ever set via these two calls, same as manager.js).
+    if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestMasterData === 'function') {
+      ClientProjectAPI.ingestMasterData(master);
+    }
+
     const results = await Promise.all(
       TL_EMPLOYEES.map(emp =>
         apiGetAllHistory(emp.id)
@@ -50,6 +72,10 @@ async function initTeamLeader() {
       )
     );
     TL_DATA = results.flat();
+
+    if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestTimesheetData === 'function') {
+      ClientProjectAPI.ingestTimesheetData(TL_DATA);
+    }
 
     renderTLPortal();
   } catch(err) {
@@ -66,8 +92,9 @@ function renderTLPortal() {
     <!-- Top nav tabs -->
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
+        { id:'project',   icon:'📁', label:'Project'   },
+        { id:'client',    icon:'🏢', label:'Client'    },
         { id:'employees', icon:'👥', label:'Employees' },
-        { id:'projects',  icon:'📁', label:'Projects'  },
       ].map(t => `
         <button class="tl-tab${TL_TAB===t.id?' active':''}" data-tab="${t.id}" style="
           padding:8px 16px;border:none;background:none;cursor:pointer;
@@ -97,15 +124,30 @@ function renderTLPortal() {
 }
 
 // ── ROUTE TO TAB ──────────────────────────────────
+// Project and Client are pure hand-offs to client-project.js, same
+// pattern as manager.js — if that module hasn't loaded, show a plain
+// message instead of falling back to any old local implementation.
 function renderTLTab() {
   const content = $('tlTabContent');
   if (!content) return;
-  if (TL_TAB === 'employees') renderTLEmployeesTab(content);
-  if (TL_TAB === 'projects')  renderTLProjectsTab(content);
+
+  if (TL_TAB === 'project') {
+    if (typeof renderProjectTab === 'function') renderProjectTab(content);
+    else content.innerHTML = `<div class="chart-empty">Project module (client-project.js) is not loaded.</div>`;
+    return;
+  }
+
+  if (TL_TAB === 'client') {
+    if (typeof renderClientTab === 'function') renderClientTab(content);
+    else content.innerHTML = `<div class="chart-empty">Client module (client-project.js) is not loaded.</div>`;
+    return;
+  }
+
+  if (TL_TAB === 'employees') { renderTLEmployeesTab(content); return; }
 }
 
 // ══════════════════════════════════════════════════
-// TAB 1: EMPLOYEES
+// EMPLOYEES TAB
 // ══════════════════════════════════════════════════
 function renderTLEmployeesTab(content) {
   const filtered = getTLFiltered();
@@ -175,9 +217,12 @@ function renderTLEmpCards() {
 
   // Build employee map
   const empMap = {};
-  TL_EMPLOYEES.forEach(emp => {
+  // entryIndex = this employee's row position in the Employees sheet
+  // — same "last entered employee first" fix applied to manager.js's
+  // Employees tab. Higher index = added later = shown first.
+  TL_EMPLOYEES.forEach((emp, idx) => {
     empMap[emp.id] = {
-      id: emp.id, name: emp.name, team: emp.team,
+      id: emp.id, name: emp.name, team: emp.team, entryIndex: idx,
       hours: 0, days: new Set(), leaves: 0,
       projectMap: {}, missedDays: [],
       monthHours: 0, monthDays: 0, monthLeaves: 0,
@@ -212,11 +257,13 @@ function renderTLEmpCards() {
     emp.monthLeaves = me.filter(e=>e.status==='Leave').length;
   });
 
-  const rows = Object.values(empMap).sort((a,b) => b.hours-a.hours);
+  // Most recently entered employee first (highest row position in
+  // the Employees sheet = added most recently) — matches manager.js.
+  const rows = Object.values(empMap).sort((a,b) => b.entryIndex - a.entryIndex);
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;margin-top:.5rem;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1.25rem;margin-top:.5rem;">
       ${rows.map(emp => buildTLEmpCard(emp)).join('')}
     </div>`;
 
@@ -380,126 +427,6 @@ function buildTLEmpCard(emp) {
     </div>`;
 }
 
-// ══════════════════════════════════════════════════
-// TAB 2: PROJECTS
-// ══════════════════════════════════════════════════
-function renderTLProjectsTab(content) {
-  // Aggregate all project data from entries
-  const projMap = {};
-  TL_DATA.filter(e=>e.status!=='Leave'&&e.project).forEach(e => {
-    const key = e.projectId || e.project;
-    if (!projMap[key]) {
-      projMap[key] = {
-        id: e.projectId||'', name: e.project,
-        clientId: e.clientId||'', client: e.client||'—',
-        hours: 0, employees: new Set(), tasks: new Set(),
-        weekHours: 0, monthHours: 0,
-      };
-    }
-    const h    = tlParseH(e.hours);
-    const isWk = e.date >= weekStart() && e.date <= todayStr();
-    const isMo = e.date.startsWith(todayStr().slice(0,7));
-    projMap[key].hours += h;
-    if (isWk) projMap[key].weekHours  += h;
-    if (isMo) projMap[key].monthHours += h;
-    projMap[key].employees.add(e.empId);
-    if (e.task) projMap[key].tasks.add(e.task);
-  });
-
-  const rows  = Object.values(projMap).sort((a,b)=>b.hours-a.hours);
-  const total = rows.reduce((s,r)=>s+r.hours,0);
-
-  content.innerHTML = `
-    <div style="font-size:16px;font-weight:700;color:var(--txt1);margin-bottom:1.25rem;">
-      Project Overview
-      <span style="font-size:12px;font-weight:400;color:var(--txt2);margin-left:8px;">${rows.length} active project${rows.length!==1?'s':''}</span>
-    </div>
-
-    <!-- Project cards -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;">
-      ${rows.length === 0
-        ? `<div style="grid-column:span 2;text-align:center;padding:2rem;color:var(--txt2);">No project data found.</div>`
-        : rows.map((proj,idx) => buildTLProjCard(proj, idx, total)).join('')}
-    </div>`;
-}
-
-function buildTLProjCard(proj, idx, total) {
-  const color    = TL_PALETTE[idx % TL_PALETTE.length];
-  const pct      = total > 0 ? Math.round((proj.hours/total)*100) : 0;
-  const resources = [...proj.employees].map(eid => {
-    const emp   = TL_EMPLOYEES.find(e=>e.id===eid);
-    const empH  = tlCalcHours(TL_DATA.filter(e=>e.empId===eid&&e.project===proj.name&&e.status!=='Leave'));
-    return { name: emp?.name||eid, hours: empH };
-  }).sort((a,b)=>b.hours-a.hours);
-
-  return `
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:14px;padding:1.2rem;">
-      <!-- Project header -->
-      <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:1rem;">
-        <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;margin-top:3px;"></span>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:14px;color:var(--txt1);
-            overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(proj.name)}">${esc(proj.name)}</div>
-          <div style="font-size:11px;color:var(--txt2);margin-top:2px;">${esc(proj.client)}</div>
-        </div>
-      </div>
-
-      <!-- Hours stats -->
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem;">
-        <div style="background:var(--surface2);border-radius:8px;padding:8px;text-align:center;">
-          <div style="font-size:10px;color:var(--txt2);">Total</div>
-          <div style="font-size:14px;font-weight:700;color:var(--a1);">${fh(proj.hours)}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:8px;text-align:center;">
-          <div style="font-size:10px;color:var(--txt2);">This Week</div>
-          <div style="font-size:14px;font-weight:700;color:var(--txt1);">${fh(proj.weekHours)}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:8px;text-align:center;">
-          <div style="font-size:10px;color:var(--txt2);">This Month</div>
-          <div style="font-size:14px;font-weight:700;color:var(--txt1);">${fh(proj.monthHours)}</div>
-        </div>
-      </div>
-
-      <!-- Share bar -->
-      <div style="margin-bottom:1rem;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span style="font-size:11px;color:var(--txt2);">Share of total hours</span>
-          <span style="font-size:11px;font-weight:600;color:var(--txt1);">${pct}%</span>
-        </div>
-        <div style="background:var(--surface2);border-radius:4px;height:6px;overflow:hidden;">
-          <div style="height:100%;width:${pct}%;background:${color};border-radius:4px;transition:width .5s;"></div>
-        </div>
-      </div>
-
-      <!-- Resources -->
-      <div>
-        <div style="font-size:10px;color:var(--txt2);margin-bottom:6px;
-          text-transform:uppercase;letter-spacing:.5px;">
-          Team (${resources.length} member${resources.length!==1?'s':''})
-        </div>
-        <div style="display:flex;flex-direction:column;gap:4px;">
-          ${resources.slice(0,5).map(r => `
-            <div style="display:flex;align-items:center;justify-content:space-between;
-              padding:4px 8px;background:var(--surface2);border-radius:6px;">
-              <span style="font-size:11px;color:var(--txt1);">${esc(r.name)}</span>
-              <span style="font-size:11px;font-weight:600;color:var(--a1);">${fh(r.hours)}</span>
-            </div>`).join('')}
-          ${resources.length>5?`<div style="font-size:10px;color:var(--txt2);padding:2px 8px;">+${resources.length-5} more</div>`:''}
-        </div>
-      </div>
-
-      <!-- Tasks -->
-      ${proj.tasks.size>0?`
-      <div style="margin-top:10px;">
-        <div style="font-size:10px;color:var(--txt2);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;">Tasks</div>
-        <div style="display:flex;flex-wrap:wrap;gap:4px;">
-          ${[...proj.tasks].map(t=>`<span style="background:var(--surface2);border:1px solid var(--border);
-            border-radius:5px;padding:2px 8px;font-size:10px;color:var(--txt2);">${esc(t)}</span>`).join('')}
-        </div>
-      </div>`:''}
-    </div>`;
-}
-
 // ── FORCE LEAVE ───────────────────────────────────
 async function applyTLLeave(btn, empId, date, empName) {
   btn.disabled=true; btn.textContent='…';
@@ -601,7 +528,7 @@ function getTL15Days() {
   return dates;
 }
 
-// ── SVG DONUT ─────────────────────────────────────
+// ── SVG DONUT (per-employee project-hours breakdown) ─────────────
 function buildTLDonut(projects, total) {
   const size=160, cx=80, cy=80, r=66, innerR=44;
   if (!total||!projects.length) return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">

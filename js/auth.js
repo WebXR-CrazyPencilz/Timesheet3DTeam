@@ -68,20 +68,35 @@ function showEmployeeLoadError(msg) {
   toast('e', 'Could not load employees', msg, 8000);
 }
 
+// Every configured Team Leader account, e.g.
+// [{id:'TL1',pw:'...',name:'Team Leader 1'}, {id:'TL2',...}].
+// Centralized here so the dropdown, the quick-tabs, and the login
+// submit handler all read from the same single list — add or remove
+// a Team Leader in CONFIG.TEAM_LEADERS and every part of the login
+// screen picks it up automatically, nothing else needs editing.
+function getTeamLeaderAccounts() {
+  return Array.isArray(CONFIG.TEAM_LEADERS) && CONFIG.TEAM_LEADERS.length
+    ? CONFIG.TEAM_LEADERS
+    : [{ id: CONFIG.TL_ID || 'TL', pw: CONFIG.TL_PW || 'teamlead123', name: 'Team Leader' }]; // fallback for old single-TL config
+}
+
 function renderEmployeeDropdown() {
   const empSel = $('lemp');
   const tabs   = $('etabs');
 
-  // Add Manager + TL options at top
+  // Add Manager option at top
   const mgrOpt = document.createElement('option');
   mgrOpt.value = CONFIG.MANAGER_ID || 'MGR';
   mgrOpt.textContent = '🔑 Manager';
   empSel.appendChild(mgrOpt);
 
-  const tlOpt = document.createElement('option');
-  tlOpt.value = CONFIG.TL_ID || 'TL';
-  tlOpt.textContent = '👥 Team Leader';
-  empSel.appendChild(tlOpt);
+  // Add one option per configured Team Leader account
+  getTeamLeaderAccounts().forEach(tl => {
+    const tlOpt = document.createElement('option');
+    tlOpt.value = tl.id;
+    tlOpt.textContent = `👥 ${tl.name}`;
+    empSel.appendChild(tlOpt);
+  });
 
   LIVE_EMPLOYEES.forEach(e => {
     const o = document.createElement('option');
@@ -111,12 +126,13 @@ function renderEmployeeDropdown() {
   empSel.onchange = () => {
     const id  = empSel.value;
     const emp = LIVE_EMPLOYEES.find(e => e.id === id);
+    const tl  = getTeamLeaderAccounts().find(t => t.id === id);
     const pill = $('idpill'), txt = $('idtxt');
     if (id === (CONFIG.MANAGER_ID || 'MGR')) {
       txt.textContent = 'Manager Access';
       pill.classList.add('show');
-    } else if (id === (CONFIG.TL_ID || 'TL')) {
-      txt.textContent = 'Team Leader Access';
+    } else if (tl) {
+      txt.textContent = `${tl.name} Access`;
       pill.classList.add('show');
     } else if (emp) {
       txt.textContent = `${emp.id} · ${emp.team}`;
@@ -153,10 +169,12 @@ function renderEmployeeDropdown() {
         loginAsManager({ id: 'MGR', name: 'Manager', team: 'Management', role: 'manager' });
         return;
       }
-      // Team Leader login
-      if (id === (CONFIG.TL_ID || 'TL')) {
-        if (pw !== CONFIG.TL_PW) throw new Error('Wrong team leader password.');
-        loginAsTL({ id: 'TL', name: 'Team Leader', team: 'All Teams', role: 'tl' });
+      // Team Leader login — matched by whichever configured account
+      // this dropdown selection corresponds to.
+      const tlAccount = getTeamLeaderAccounts().find(t => t.id === id);
+      if (tlAccount) {
+        if (pw !== tlAccount.pw) throw new Error('Wrong team leader password.');
+        loginAsTL({ id: tlAccount.id, name: tlAccount.name, team: 'All Teams', role: 'tl' });
         return;
       }
       // Employee login
@@ -229,8 +247,14 @@ async function loginAsTL(emp, silent = false) {
   USER = emp;
   sessionStorage.setItem(CONFIG.LS_SESSION, JSON.stringify({ ...emp, role: 'tl' }));
 
+  // Initials from the Team Leader's actual configured name (e.g.
+  // "Team Leader 1" -> "TL", or a real name like "Priya Kumar" -> "PK")
+  // instead of a hardcoded "TL" — so two different Team Leaders show
+  // distinct avatars if given real names in CONFIG.TEAM_LEADERS.
+  const initials = emp.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'TL';
+
   const av = $('tlAv');
-  if (av) av.textContent = 'TL';
+  if (av) av.textContent = initials;
   const tn = $('tlName');
   if (tn) tn.textContent = emp.name;
   const tt = $('tlTeam');
@@ -241,7 +265,7 @@ async function loginAsTL(emp, silent = false) {
   $('mgrPortal').classList.remove('on');
   $('tlPortal').classList.add('on');
 
-  if (!silent) toast('s', `Welcome, Team Leader! 👋`, 'Team Leader Portal');
+  if (!silent) toast('s', `Welcome, ${emp.name}! 👋`, 'Team Leader Portal');
   initTeamLeader();
 }
 
