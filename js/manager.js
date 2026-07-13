@@ -228,10 +228,6 @@ function renderEmpContent() {
 // ── EMPLOYEE CARDS ────────────────────────────────
 function renderEmpCards(content, worked, all) {
   const empMap = {};
-  // entryIndex = this employee's row position in the Employees sheet,
-  // in the order apiGetMasterData() returned them (top to bottom).
-  // Used to sort cards "most recently entered employee first" —
-  // higher index = added later = shown first.
   MGR_EMPLOYEES.forEach((emp, idx) => {
     empMap[emp.id] = {
       id: emp.id, name: emp.name, team: emp.team, entryIndex: idx,
@@ -301,17 +297,24 @@ function renderEmpCards(content, worked, all) {
     else if (todayDow === 0 || todayDow === 6)   emp.todayStatus = 'Weekend';
     else                                          emp.todayStatus = 'Working';
 
-    // Kept for potential future use, but no longer the sort key —
-    // cards now sort by entryIndex (last entered first), not by
-    // recent timesheet activity. See below.
+    // "Last entered" means last TIMESHEET ACTIVITY — whoever most
+    // recently logged an actual entry — not when their employee
+    // record was added to the sheet. entryIndex (row position) was
+    // the wrong signal: it put employees at the top just because
+    // they were added recently, even with zero recent activity.
     emp.lastActivityDate = MGR_DATA
       .filter(e => e.empId === emp.id)
       .reduce((max, e) => (e.date > max ? e.date : max), '');
   });
 
-  // Most recently entered employee first (highest row position in the
-  // Employees sheet = added most recently).
-  const rows = Object.values(empMap).sort((a, b) => b.entryIndex - a.entryIndex);
+  // Most recently active employee first — whoever has the most
+  // recent logged entry (of any kind) shows first; someone with no
+  // recent activity sorts toward the end regardless of when they
+  // were hired. Ties broken by total hours in the current range.
+  const rows = Object.values(empMap).sort((a, b) => {
+    if (a.lastActivityDate !== b.lastActivityDate) return b.lastActivityDate.localeCompare(a.lastActivityDate);
+    return b.hours - a.hours;
+  });
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `

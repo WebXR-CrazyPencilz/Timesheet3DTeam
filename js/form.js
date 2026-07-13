@@ -309,7 +309,8 @@ function renderEntryRow(slotKey, entryNum, entry) {
     <!-- Actions -->
     <div class="entry-actions">
       <button class="btn bghost leave-btn"
-        onclick="markLeave('${id}', '${slotKey}', ${entryNum})">
+        onclick="markLeave('${id}', '${slotKey}', ${entryNum})"
+        title="Marks the Time In / Time Out set above as leave — set a short window (e.g. 2:00–3:00) for a permission, not the whole slot">
         🏖️ Mark Leave
       </button>
       <button class="btn bpri save-btn" id="savebtn-${id}"
@@ -318,7 +319,8 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <svg class="bi" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
         <div class="bspin"></div>
       </button>
-    </div>`}
+    </div>
+    <div class="slot-time-hint" style="margin-top:4px;">Tip: for a short permission (not a full day off), set just that time range above before clicking Mark Leave — then use "+ Add Project" to log the rest of the slot as worked.</div>`}
   </div>`;
 }
 
@@ -414,15 +416,50 @@ function updateNotesCount(id) {
 }
 
 // ── MARK LEAVE ────────────────────────────────────
+// ── MARK LEAVE (supports partial-time permission) ─────────────────
+// Uses whatever Time In / Time Out is currently set on THIS entry row
+// — not the slot's full default range — so marking e.g. 2:00–3:00 PM
+// as Leave only removes that one hour, not the entire Afternoon slot.
+// The employee then uses "+ Add Project" to log a separate, accurate
+// work entry for the rest of the slot with its own real time range.
+// A reason is now required before this can be submitted at all.
+const MIN_LEAVE_REASON_LENGTH = 10;
+
 async function markLeave(id, slotKey, entryNum) {
+  const meta   = SLOT_META[slotKey];
+  const timeIn  = $(`tin-${id}`)?.value  || '';
+  const timeOut = $(`tout-${id}`)?.value || '';
+
+  if (!timeIn || !timeOut) {
+    toast('e', 'Set a time range first', 'Pick the Time In / Time Out for the leave window above, then Mark Leave.');
+    return;
+  }
+
+  const toMinutesLocal = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+  const minM = toMinutesLocal(meta.minTime), maxM = toMinutesLocal(meta.maxTime);
+  const inM  = toMinutesLocal(timeIn),       outM = toMinutesLocal(timeOut);
+
+  if (inM < minM || inM > maxM || outM < minM || outM > maxM) {
+    toast('e', 'Time out of range', `${meta.label} allows ${meta.displayMin}–${meta.maxTime}`);
+    return;
+  }
+  if (outM <= inM) {
+    toast('e', 'Time Out must be after Time In');
+    return;
+  }
+
+  const reason = await promptLeaveReason(meta.label, timeIn, timeOut);
+  if (reason === null) return; // cancelled — nothing saved
+
+  const hours = Math.round(((outM - inM) / 60) * 100) / 100;
+
   const entry = {
     ...buildEntryBase(slotKey, entryNum),
-    timeIn:    SLOT_META[slotKey].defaultIn,
-    timeOut:   SLOT_META[slotKey].defaultOut,
+    timeIn, timeOut,
     client:    'Leave', clientId:  '',
     project:   'Leave', projectId: '',
-    task:      'Leave', notes:     '',
-    hours:     0,
+    task:      'Leave', notes:     reason,
+    hours,
     status:    'Leave',
   };
 
@@ -447,12 +484,58 @@ async function markLeave(id, slotKey, entryNum) {
     }
 
     refreshStats(); refreshFilters(); refreshTable(); refreshChart();
-    toast('i', 'Marked as Leave', `${SLOT_META[slotKey].label} slot ${entryNum}`);
+    toast('i', 'Marked as Leave', `${SLOT_META[slotKey].label} · ${timeIn}–${timeOut} (${fmtHoursDisplay(hours)})`);
   } catch(err) {
     toast('e', 'Failed', err.message);
   } finally {
     if (btn) { btn.classList.remove('ld'); btn.disabled = false; }
   }
+}
+
+// Small required-reason modal shown before a Leave/Permission entry
+// is saved. Resolves to the trimmed reason string, or null if the
+// person cancelled (in which case nothing is saved).
+function promptLeaveReason(slotLabel, timeIn, timeOut) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);'
+      + 'display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML = `
+      <div style="background:var(--surface1);border:1px solid var(--border-md);
+        border-radius:14px;padding:1.25rem;width:360px;max-width:92vw;">
+        <div style="font-weight:700;font-size:15px;color:var(--txt1);margin-bottom:2px;">🏖️ Reason for Leave</div>
+        <div style="font-size:12px;color:var(--txt2);margin-bottom:12px;">${esc(slotLabel)} · ${timeIn} – ${timeOut}</div>
+        <label style="font-size:11px;color:var(--txt2);font-weight:600;display:block;margin-bottom:4px;">
+          Notes <span style="color:#f87171;">(required)</span>
+        </label>
+        <textarea id="leaveReasonInput" rows="3" maxlength="200"
+          placeholder="Why are you taking this time off? (min ${MIN_LEAVE_REASON_LENGTH} characters)"
+          style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:7px;
+            color:var(--txt1);font-size:12.5px;padding:8px 10px;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+          <button id="leaveReasonCancel" style="background:none;border:1px solid var(--border-md);
+            color:var(--txt2);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;">Cancel</button>
+          <button id="leaveReasonSubmit" style="background:var(--a1);border:none;
+            color:#fff;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;">Submit</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const cleanup = () => overlay.remove();
+    overlay.addEventListener('click', e => { if (e.target === overlay) { cleanup(); resolve(null); } });
+    overlay.querySelector('#leaveReasonCancel').addEventListener('click', () => { cleanup(); resolve(null); });
+    overlay.querySelector('#leaveReasonSubmit').addEventListener('click', () => {
+      const ta  = overlay.querySelector('#leaveReasonInput');
+      const val = ta.value.trim();
+      if (val.length < MIN_LEAVE_REASON_LENGTH) {
+        ta.style.borderColor = '#f87171';
+        toast('e', 'Reason too short', `Write at least ${MIN_LEAVE_REASON_LENGTH} characters (currently ${val.length}).`);
+        return;
+      }
+      cleanup();
+      resolve(val);
+    });
+  });
 }
 
 // ── UNDO LEAVE ────────────────────────────────────

@@ -28,7 +28,7 @@ let TL_EMPLOYEES   = [];
 let TL_CLIENTS     = [];
 let TL_PROJECTS    = [];
 
-let TL_TAB         = 'project';    // project|client|employees — Project is the default landing tab, matching Manager
+let TL_TAB         = 'employees';  // project|client|employees — Employees is the default landing tab (Team Leader manages people first)
 let TL_RANGE       = 'week';
 let TL_DAY_OFFSET  = 0;
 let TL_MONTH       = '';
@@ -217,15 +217,12 @@ function renderTLEmpCards() {
 
   // Build employee map
   const empMap = {};
-  // entryIndex = this employee's row position in the Employees sheet
-  // — same "last entered employee first" fix applied to manager.js's
-  // Employees tab. Higher index = added later = shown first.
   TL_EMPLOYEES.forEach((emp, idx) => {
     empMap[emp.id] = {
       id: emp.id, name: emp.name, team: emp.team, entryIndex: idx,
       hours: 0, days: new Set(), leaves: 0,
       projectMap: {}, missedDays: [],
-      monthHours: 0, monthDays: 0, monthLeaves: 0,
+      monthHours: 0, monthDays: 0, monthLeaves: 0, lastActivityDate: '',
     };
   });
 
@@ -255,11 +252,22 @@ function renderTLEmpCards() {
     emp.monthHours  = mw.reduce((s,e) => s+tlParseH(e.hours), 0);
     emp.monthDays   = new Set(mw.map(e=>e.date)).size;
     emp.monthLeaves = me.filter(e=>e.status==='Leave').length;
+
+    // "Last entered" means last TIMESHEET ACTIVITY — whoever most
+    // recently logged an actual entry — not when their employee
+    // record was added to the sheet (that's what entryIndex was,
+    // and it's the wrong signal: someone with zero recent activity
+    // could still show up at the top just for being a newer hire).
+    emp.lastActivityDate = TL_DATA
+      .filter(e => e.empId === emp.id)
+      .reduce((max, e) => (e.date > max ? e.date : max), '');
   });
 
-  // Most recently entered employee first (highest row position in
-  // the Employees sheet = added most recently) — matches manager.js.
-  const rows = Object.values(empMap).sort((a,b) => b.entryIndex - a.entryIndex);
+  // Most recently active employee first — matches manager.js.
+  const rows = Object.values(empMap).sort((a, b) => {
+    if (a.lastActivityDate !== b.lastActivityDate) return b.lastActivityDate.localeCompare(a.lastActivityDate);
+    return b.hours - a.hours;
+  });
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `
@@ -270,6 +278,13 @@ function renderTLEmpCards() {
   content.querySelectorAll('.tl-leave-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       await applyTLLeave(btn, btn.dataset.empId, btn.dataset.date, btn.dataset.empName);
+    });
+  });
+
+  content.querySelectorAll('.view-emp-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (typeof openEmpDetail === 'function') openEmpDetail(btn.dataset.empId, btn.dataset.empName);
+      else toast?.('e', 'Employee Detail unavailable', 'emp-detail.js is not loaded.');
     });
   });
 }
@@ -406,6 +421,12 @@ function buildTLEmpCard(emp) {
         </div>
         ${emp.leaves>0?`<span style="background:rgba(251,191,36,0.15);color:#fbbf24;
           border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600;">${emp.leaves}L</span>`:''}
+        <button class="view-emp-btn" data-emp-id="${emp.id}" data-emp-name="${esc(emp.name)}"
+          style="background:var(--a1);color:#fff;border:none;border-radius:6px;
+            padding:5px 12px;font-size:10px;font-weight:600;cursor:pointer;
+            white-space:nowrap;flex-shrink:0;">
+          View Details →
+        </button>
       </div>
 
       <!-- Donut LEFT + Legend RIGHT -->

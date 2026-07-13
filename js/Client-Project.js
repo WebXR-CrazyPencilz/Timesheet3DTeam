@@ -437,7 +437,7 @@ async function loadProjectData() {
 // ══════════════════════════════════════════════════════════════
 async function renderClientCards(content) {
   const isManager = CP_ROLE === 'manager';
-  const sorted = sortClientsByEntry(CP_CLIENTS); // last entered client first — same standing rule as Projects/Employees
+  const sorted = sortClientsByRecency(CP_CLIENTS); // most recently active client first — corrected from entry-order, see sortClientsByRecency
 
   content.innerHTML = `
     <div class="cp-tab-header">
@@ -711,7 +711,7 @@ function openClientEditor(content, client = null, onDone = null) {
 // ══════════════════════════════════════════════════════════════
 function renderClientDetail(content, client) {
   const isManager = CP_ROLE === 'manager';
-  const projects = sortProjectsByCreated(CP_PROJECTS.filter(p => p.clientId === client.id)); // last entered project first
+  const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === client.id)); // most recently active project first
 
   content.innerHTML = `
     <div style="margin-bottom:1rem;">
@@ -753,7 +753,7 @@ function renderClientDetail(content, client) {
 // ══════════════════════════════════════════════════════════════
 function renderProjectList(content) {
   const isManager = CP_ROLE === 'manager';
-  const sortedProjects = sortProjectsByCreated(CP_PROJECTS); // last entered project first
+  const sortedProjects = sortProjectsByRecency(CP_PROJECTS); // most recently active project first — corrected from creation-order
 
   content.innerHTML = `
     <div class="cp-tab-header">

@@ -57,7 +57,9 @@ function openForceEntry(empId, empName, dateStr, onDone) {
   FE_DATE      = dateStr;
   FE_RETURN_TO = typeof onDone === 'function' ? onDone : null;
 
-  const container = $('mgrApp');
+  // Shared with emp-detail.js: this page is used from both the
+  // Manager and Team Leader portals, each with its own container.
+  const container = (typeof TL_MODE !== 'undefined' && TL_MODE) ? $('tlApp') : $('mgrApp');
   if (!container) return;
 
   const enteredBy = getEnteredByInfo();

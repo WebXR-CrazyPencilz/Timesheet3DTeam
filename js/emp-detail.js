@@ -46,6 +46,19 @@ const STATUS_META = {
   upcoming:    { icon: '⚪', label: 'Upcoming',     fg: 'var(--txt2)', bg: 'var(--surface2)'    },
 };
 
+// This page is shared by both the Manager and Team Leader portals —
+// each has its own container div and its own "go back to the tab
+// shell" renderer. Derived from the same MANAGER_MODE/TL_MODE
+// session globals auth.js already maintains, no new auth logic.
+function getEmpDetailContainer() {
+  if (typeof TL_MODE !== 'undefined' && TL_MODE) return $('tlApp');
+  return $('mgrApp');
+}
+function returnToPortalHome() {
+  if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof renderTLPortal === 'function') { renderTLPortal(); return; }
+  if (typeof renderManagerPortal === 'function') renderManagerPortal();
+}
+
 // ── Open Employee Detail Page ──────────────────────────────────
 async function openEmpDetail(empId, empName) {
   EMP_DETAIL_EMP     = { id: empId, name: empName };
@@ -58,7 +71,7 @@ async function openEmpDetail(empId, empName) {
   const toStr   = today.toISOString().slice(0, 10);
   const fromStr = from.toISOString().slice(0, 10);
 
-  const container = $('mgrApp');
+  const container = getEmpDetailContainer();
   if (!container) return;
 
   container.innerHTML = `
@@ -192,7 +205,7 @@ async function openEmpDetail(empId, empName) {
   $('empDetailBack').addEventListener('click', () => {
     EMP_DETAIL_DATA = null;
     EMP_DETAIL_EMP  = null;
-    renderManagerPortal();
+    returnToPortalHome();
   });
 
   // Bind quick range pills
