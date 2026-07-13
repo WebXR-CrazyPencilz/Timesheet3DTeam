@@ -187,6 +187,18 @@ function sortClientsByRecency(clients) {
   return clients.slice().sort((a, b) => getClientLastActivity(b.id) - getClientLastActivity(a.id));
 }
 
+// "Last entered first" — the standing ordering rule across this
+// entire app (Projects, Clients, Employees all follow it, in both
+// the Manager and Team Leader dashboards): whichever record was most
+// recently added shows first, wherever it's listed. Clients (like
+// Employees) have no Created Date column — the Clients sheet is just
+// Name + ID — so entryIndex (row position, stamped in loadClientData)
+// is the signal here: new clients are always appendRow()'d to the
+// bottom in Code.gs, so the last row is the most recently added.
+function sortClientsByEntry(clients) {
+  return clients.slice().sort((a, b) => (b.entryIndex || 0) - (a.entryIndex || 0));
+}
+
 // Resolve the current portal role from the same session globals
 // auth.js already maintains — no new auth logic introduced here.
 function getCPRole() {
@@ -398,7 +410,12 @@ async function renderProjectTab(content) {
 }
 
 async function loadClientData() {
-  CP_CLIENTS = await sheetGET({ action: 'getClientMasterList' });
+  // getClientMasterList returns rows in sheet order (top to bottom),
+  // and Code.gs's createClientMaster always appendRow()s new clients
+  // to the bottom — so this index doubles as "how recently was this
+  // client entered", the same signal used for Projects and Employees.
+  const clients = await sheetGET({ action: 'getClientMasterList' });
+  CP_CLIENTS = clients.map((c, idx) => ({ ...c, entryIndex: idx }));
   window.MGR_CLIENTS = CP_CLIENTS; // keep the compatibility shim fresh too
 }
 
@@ -420,7 +437,7 @@ async function loadProjectData() {
 // ══════════════════════════════════════════════════════════════
 async function renderClientCards(content) {
   const isManager = CP_ROLE === 'manager';
-  const sorted = sortClientsByRecency(CP_CLIENTS);
+  const sorted = sortClientsByEntry(CP_CLIENTS); // last entered client first — same standing rule as Projects/Employees
 
   content.innerHTML = `
     <div class="cp-tab-header">
@@ -550,46 +567,64 @@ function buildClientCandleChart(client, projects, isManager, costMap) {
   const maxHours = Math.max(...perProject.map(x => x.totalHours), 0.01);
 
   const candles = perProject.map(({ project: p, totals, totalHours }) => {
-    const fillPct = totalHours > 0 ? Math.max((totalHours / maxHours) * 100, 5) : 0;
-    const segments = totals.map(t => {
-      const segPct = (t.hours / totalHours) * 100;
-      return `<div style="width:100%;height:${segPct}%;background:${getEmployeeColor(t.empId)};"
-        title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
-    }).join('');
-
-    let moneyHtml = '';
-    if (isManager) {
-      const constant = parseFloat(p.projectConstant) || 0;
-      const value    = parseFloat(p.projectValue) || 0;
-      const cost     = costMap ? costMap[p.projectId] : null;
-
-      const perfHtml = cost
-        ? (() => {
-            const isProfit = cost.profit >= 0;
-            return `<div style="font-size:9.5px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(cost.profit))}</div>`;
-          })()
-        : `<div style="font-size:9px;color:var(--txt2);">Calculating…</div>`;
-
-      moneyHtml = `
-        <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">C: ${fmtCPRupees(constant)}</div>
-        <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">V: ${fmtCPRupees(value)}</div>
-        ${perfHtml}`;
-    }
-
-    return `
-      <div style="flex:0 0 68px;display:flex;flex-direction:column;align-items:center;gap:5px;">
-        <div style="width:26px;height:88px;background:var(--surface2);border-radius:6px;overflow:hidden;
-          display:flex;flex-direction:column-reverse;" title="${esc(p.projectName || p.projectId)}: ${fmtHM(totalHours)}">
-          <div style="width:100%;height:${fillPct}%;display:flex;flex-direction:column-reverse;">${segments}</div>
-        </div>
-        <div style="font-size:9.5px;color:var(--txt1);font-weight:600;text-align:center;max-width:68px;
-          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.projectName || p.projectId)}">${esc(p.projectId)}</div>
-        <div style="font-size:9px;color:var(--txt2);">${fmtHM(totalHours)}</div>
-        ${moneyHtml}
-      </div>`;
+    const cost = isManager ? (costMap ? costMap[p.projectId] : null) : null;
+    return buildCandle(p, totals, totalHours, maxHours, isManager, cost);
   }).join('');
 
   return `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;align-items:flex-end;">${candles}</div>`;
+}
+
+// One "candle" — a vertical stacked bar whose fill height (relative
+// to maxHours) represents total hours, segmented by employee color.
+// Shared by buildClientCandleChart (one candle per project, maxHours
+// = the client's busiest project) and the Project Detail page (a
+// single candle for just this project, maxHours = its own total, so
+// it always fills completely — see renderProjectCandleSection).
+function buildCandle(project, totals, totalHours, maxHours, showMoney, cost) {
+  // Minimum visibility: even at zero hours, the candle track gets a
+  // visible border (so it doesn't blend into the card background)
+  // and a small muted placeholder sliver instead of being fully
+  // empty — otherwise a 0-hour project just looked like nothing was
+  // there at all, rather than "a candle with nothing in it yet".
+  const hasHours = totalHours > 0;
+  const fillPct  = hasHours ? Math.max((totalHours / maxHours) * 100, 5) : 8;
+  const segments = hasHours
+    ? totals.map(t => {
+        const segPct = (t.hours / totalHours) * 100;
+        return `<div style="width:100%;height:${segPct}%;background:${getEmployeeColor(t.empId)};"
+          title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+      }).join('')
+    : `<div style="width:100%;height:100%;background:var(--border-md);" title="No hours logged yet"></div>`;
+
+  let moneyHtml = '';
+  if (showMoney) {
+    const constant = parseFloat(project.projectConstant) || 0;
+    const value    = parseFloat(project.projectValue) || 0;
+
+    const perfHtml = cost
+      ? (() => {
+          const isProfit = cost.profit >= 0;
+          return `<div style="font-size:9.5px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(cost.profit))}</div>`;
+        })()
+      : `<div style="font-size:9px;color:var(--txt2);">Calculating…</div>`;
+
+    moneyHtml = `
+      <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">C: ${fmtCPRupees(constant)}</div>
+      <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">V: ${fmtCPRupees(value)}</div>
+      ${perfHtml}`;
+  }
+
+  return `
+    <div style="flex:0 0 68px;display:flex;flex-direction:column;align-items:center;gap:5px;">
+      <div style="width:26px;height:88px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;
+        display:flex;flex-direction:column-reverse;" title="${esc(project.projectName || project.projectId)}: ${fmtHM(totalHours)}">
+        <div style="width:100%;height:${fillPct}%;display:flex;flex-direction:column-reverse;">${segments}</div>
+      </div>
+      <div style="font-size:9.5px;color:var(--txt1);font-weight:600;text-align:center;max-width:68px;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(project.projectName || project.projectId)}">${esc(project.projectId)}</div>
+      <div style="font-size:9px;color:var(--txt2);">${fmtHM(totalHours)}</div>
+      ${moneyHtml}
+    </div>`;
 }
 
 // Create (no client passed) or rename (client passed) — Manager only,
@@ -987,9 +1022,9 @@ async function openProjectDetail(content, projectId, opts = {}) {
   // none of those sections yet, so it just gets the form alone at a
   // sensible width.
   const bodyHtml = isNew
-    ? `<div style="max-width:620px;">${formCard}</div>`
+    ? `<div style="max-width:620px;margin:0 auto;">${formCard}</div>`
     : `
-      <div style="display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
+      <div style="max-width:1400px;margin:0 auto;display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
         <div>${formCard}</div>
         <div style="display:flex;flex-direction:column;gap:1.25rem;">
           <div id="cpTimelineSection"></div>
@@ -1323,12 +1358,23 @@ function renderProjectTeamSection(project) {
   const el = $('cpTeamSection');
   if (!el) return;
 
+  // Candle shows regardless of whether there's any data — it's now
+  // visible even at zero hours (a bordered track with a muted
+  // placeholder fill), so a brand-new project still shows something
+  // rather than the whole section just disappearing.
+  const allTimeTotals = getProjectEmployeeTotals(project);
+  const allTimeHours  = allTimeTotals.reduce((s, t) => s + t.hours, 0);
+  const candleHtml    = buildCandle(project, allTimeTotals, allTimeHours || 0.01, allTimeHours || 0.01, false, null);
+
   const activity = getProjectTeamActivity(project);
   if (!activity || !activity.months.length) {
     el.innerHTML = `
       <div class="cp-card">
-        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">👥 Team &amp; Hours</div>
-        <div style="font-size:12.5px;color:var(--txt2);">No timesheet hours logged against this project yet.</div>
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:1rem;">👥 Team &amp; Hours</div>
+        <div style="display:flex;justify-content:center;margin-bottom:1rem;">
+          ${candleHtml}
+        </div>
+        <div style="font-size:12.5px;color:var(--txt2);text-align:center;">No timesheet hours logged against this project yet.</div>
       </div>`;
     return;
   }
@@ -1341,6 +1387,10 @@ function renderProjectTeamSection(project) {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:6px;">
         <div style="font-weight:700;font-size:14px;color:var(--txt1);">👥 Team &amp; Hours</div>
         <div style="font-size:11.5px;color:var(--txt2);">${activity.totalMembers} member${activity.totalMembers !== 1 ? 's' : ''} · ${activity.totalHours.toFixed(1)}h total, all time</div>
+      </div>
+
+      <div style="display:flex;justify-content:center;margin-bottom:1.1rem;">
+        ${candleHtml}
       </div>
 
       <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:1rem;">
