@@ -26,6 +26,12 @@ function refreshStats() {
   $('s1').textContent = fh(sum(worked.filter(e => e.date >= ws)));
   $('s2').textContent = fh(sum(worked.filter(e => e.date.startsWith(mo))));
   $('s3').textContent = [...new Set(ENTRIES.map(e => e.date))].length + ' days';
+
+  // Lightweight, additive-only observer: checks whether today's
+  // total just crossed the 9-hour celebration threshold. Defined in
+  // celebration.js; guarded so this is a no-op if that file isn't
+  // loaded. Does not alter anything computed above.
+  if (typeof checkDailyCelebration === 'function') checkDailyCelebration();
 }
 
 // ── FILTERS ───────────────────────────────────────
@@ -98,16 +104,16 @@ function renderPage() {
   tbody.innerHTML = slice.map((e,i) => {
     const isLeave = e.status === 'Leave';
     return `<tr class="${isLeave?'leave-row':''}">
-      <td class="rn">${(tPage-1)*PAGE+i+1}</td>
-      <td class="dcell">${fmtDate(e.date)}<br><span style="font-size:.6rem;color:var(--muted)">${e.day||''}</span>${e.savedAt ? `<br><span style="font-size:.58rem;color:var(--muted);font-style:italic" title="Saved at ${e.savedAt}">🕐 ${e.savedAt}</span>` : ''}</td>
-      <td><span class="slot-pill slot-${e.slot}">${slotIcon[e.slot]||''} ${slotLabel[e.slot]||e.slot} #${e.entryNum}</span></td>
-      <td class="dcell">${e.timeIn||'—'}</td>
-      <td class="dcell">${e.timeOut||'—'}</td>
-      <td>${isLeave ? '<span class="leave-badge-sm">🏖️ Leave</span>' : esc(e.client)}</td>
-      <td>${isLeave ? '—' : esc(e.project)}</td>
-      <td>${isLeave ? '—' : `<span class="tpill">${esc(e.task)}</span>`}</td>
-      <td class="hcell">${isLeave ? '—' : (e.hours ? fmtHrsMin(e.hours) : '—')}</td>
-      <td class="ncell" title="${esc(e.notes)}">${isLeave ? '—' : esc(e.notes)}</td>
+      <td class="rn" data-label="#">${(tPage-1)*PAGE+i+1}</td>
+      <td class="dcell" data-label="Date">${fmtDate(e.date)}<br><span style="font-size:.6rem;color:var(--muted)">${e.day||''}</span>${e.savedAt ? `<br><span style="font-size:.58rem;color:var(--muted);font-style:italic" title="Saved at ${e.savedAt}">🕐 ${e.savedAt}</span>` : ''}</td>
+      <td data-label="Slot"><span class="slot-pill slot-${e.slot}">${slotIcon[e.slot]||''} ${slotLabel[e.slot]||e.slot} #${e.entryNum}</span></td>
+      <td class="dcell" data-label="Time In">${e.timeIn||'—'}</td>
+      <td class="dcell" data-label="Time Out">${e.timeOut||'—'}</td>
+      <td data-label="Client">${isLeave ? '<span class="leave-badge-sm">🏖️ Leave</span>' : esc(e.client)}</td>
+      <td data-label="Project">${isLeave ? '—' : esc(e.project)}</td>
+      <td data-label="Task">${isLeave ? '—' : `<span class="tpill">${esc(e.task)}</span>`}</td>
+      <td class="hcell" data-label="Hours">${isLeave ? '—' : (e.hours ? fmtHrsMin(e.hours) : '—')}</td>
+      <td class="ncell" data-label="Notes" title="${esc(e.notes)}">${isLeave ? '—' : esc(e.notes)}</td>
     </tr>`;
   }).join('');
 

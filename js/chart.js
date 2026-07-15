@@ -118,7 +118,7 @@ let MY_PROJECTS_CACHE = null;
 
 function buildMyProjectsPlaceholder() {
   return `
-    <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);">
+    <div style="width:100%;max-width:100%;box-sizing:border-box;margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);">
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
         My Projects — All Time
       </div>
@@ -262,7 +262,7 @@ function buildLast5DaysRows() {
 
 function buildLast5DaysSection() {
   return `
-    <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);">
+    <div style="width:100%;max-width:100%;box-sizing:border-box;margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Last 5 Days</div>
         <input type="date" id="chartDatePicker" max="${todayStr()}"

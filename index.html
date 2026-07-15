@@ -37,9 +37,10 @@
   --bar:58px; --tr:.16s ease; --tr-s:.3s ease;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{font-size:16px}
+html{font-size:16px;overflow-x:hidden}
 body{font-family:var(--ff);font-size:.875rem;line-height:1.5;color:var(--txt);background:var(--bg);
-  min-height:100vh;-webkit-font-smoothing:antialiased;transition:background var(--tr-s),color var(--tr-s)}
+  min-height:100vh;-webkit-font-smoothing:antialiased;transition:background var(--tr-s),color var(--tr-s);
+  overflow-x:hidden;max-width:100vw}
 button,input,select,textarea{font-family:inherit;font-size:inherit}
 button{cursor:pointer;border:none;background:none}
 input,select,textarea{-webkit-appearance:none;appearance:none}
@@ -428,6 +429,7 @@ tr:hover .del-btn{opacity:1}
 .entry-num{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .saved-badge{font-size:.65rem;font-weight:700;color:var(--ok);background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.25);padding:1px .45rem;border-radius:var(--rf)}
 .leave-badge{font-size:.65rem;font-weight:700;color:var(--warn);background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3);padding:1px .45rem;border-radius:var(--rf)}
+.leave-info{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem;font-size:.82rem;color:var(--txt2);padding:.5rem 0}
 .remove-entry-btn{margin-left:auto;font-size:.65rem;color:var(--muted);padding:2px .4rem;border-radius:var(--r4);cursor:pointer;transition:all var(--tr)}
 .remove-entry-btn:hover{color:var(--err);background:rgba(248,113,113,.1)}
 .entry-times{display:flex;align-items:flex-end;gap:.65rem;margin-bottom:.4rem;flex-wrap:wrap}
@@ -485,23 +487,54 @@ tr:hover .del-btn{opacity:1}
   .add-entry-btn{width:100%;justify-content:center}
   .entry-row{padding:.9rem}
   .entry-times{flex-direction:column;align-items:stretch;gap:.6rem}
+  .leave-info{flex-direction:column;align-items:stretch;gap:.5rem}
+  .leave-info .btn{width:100%}
   .time-arrow{display:none}
   .time-inp{max-width:100%;font-size:1rem;padding:.7rem .8rem}
   .hours-display{width:100%}
   .hours-badge{width:100%;padding:.7rem}
-  .fc{padding:.75rem .85rem;font-size:.9rem}
+  .fc{padding:.75rem .85rem;font-size:1rem}
   .entry-actions{flex-direction:column-reverse;gap:.5rem}
   .leave-btn,.save-btn{width:100%;padding:.75rem}
   .daybtn{padding:.55rem 1rem;font-size:.78rem;scroll-snap-align:start}
   .date-nav{scroll-snap-type:x proximity}
   .tcontrols{width:100%}
-  .srch{width:100%;flex:1 1 100%}
-  .filt{flex:1 1 auto}
+  .srch{width:100%;flex:1 1 100%;font-size:1rem}
+  .filt{flex:1 1 auto;font-size:1rem}
   .tbox{left:.75rem;right:.75rem;bottom:.75rem;align-items:stretch}
   .toast{max-width:100%;min-width:0;padding:.9rem 1rem}
   .mgr-controls{flex-direction:column;align-items:flex-start}
   .mgr-view-tabs{width:100%}
   .mvtab{flex:1;text-align:center}
+
+  /* Safety net: iOS Safari auto-zooms the whole page in when a
+     focused input/select/textarea has font-size under 16px, then
+     the person has to manually zoom back out — this is almost
+     certainly the actual cause of "zoom in/zoom out" on mobile. The
+     rules above already fix the specific classes; this catches
+     anything else (present or future) with the same problem. */
+  input,select,textarea{font-size:16px!important}
+
+  /* History table -> stacked cards. No horizontal scroll, no zoom
+     needed to read a row — each entry becomes its own card with
+     label:value rows instead of table columns. data-label attributes
+     are added per-<td> in table.js's row template. */
+  .twrap{overflow-x:visible}
+  #htbl thead{display:none}
+  #htbl, #htbl tbody{display:block;width:100%}
+  #htbl tr{display:block;margin-bottom:.75rem;border:1px solid var(--border);
+    border-radius:var(--r12);overflow:hidden;background:var(--surface)}
+  #htbl tr.totrow{display:none} /* totals are already shown in the stats strip above */
+  #htbl td{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+    padding:.6rem .85rem;border-right:none;border-bottom:1px solid var(--border);
+    white-space:normal;text-align:right}
+  #htbl td:last-child{border-bottom:none}
+  #htbl td::before{content:attr(data-label);font-size:.62rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:.06em;color:var(--muted);text-align:left;
+    flex-shrink:0;margin-right:.75rem}
+  #htbl .rn{display:none}
+  #htbl .ncell{max-width:none}
+  #htbl tfoot{display:none}
 }
 @media(max-width:400px){
   .etabs{flex-wrap:wrap}.etab{flex:1 1 40%}
@@ -791,6 +824,7 @@ tr:hover .del-btn{opacity:1}
 <script src="js/form.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/table.js"></script>
+<script src="js/celebration.js"></script>
 <script src="js/manager.js"></script>
 <script src="js/emp-detail.js"></script>
 <script src="js/teamleader.js"></script>

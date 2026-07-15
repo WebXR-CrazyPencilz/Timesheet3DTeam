@@ -194,7 +194,7 @@ function renderRecentProjectsSlider() {
     </div>`).join('');
 
   return `
-    <div style="margin-bottom:1.1rem;">
+    <div style="width:100%;max-width:100%;box-sizing:border-box;margin-bottom:1.1rem;">
       <div style="font-size:11px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">
         Your Projects · Last 10 Days
       </div>
@@ -277,7 +277,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
     ${isLeave ? `
     <div class="leave-info">
       <span>Leave logged for ${meta.label} slot (${timeIn} – ${timeOut})</span>
-      <button class="btn bghost" onclick="undoLeave('${id}', '${slotKey}', ${entryNum})" style="margin-left:1rem">
+      <button class="btn bghost" onclick="undoLeave('${id}', '${slotKey}', ${entryNum})">
         ✕ Remove Leave
       </button>
     </div>` : `
@@ -333,7 +333,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Grading', 'Editing', '2D Floorplan', 'Unreal Engine', 'Training R&D' ].map(t =>
+            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Greeding', 'Unreal Engine', 'Training R&D' ].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
