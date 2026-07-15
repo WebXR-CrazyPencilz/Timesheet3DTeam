@@ -71,8 +71,10 @@ function refreshChart() {
     body.innerHTML = `
       <div class="chart-empty">No hours logged ${rangeLabel()} yet.</div>
       ${buildLast5DaysSection()}
+      ${buildMyProjectsPlaceholder()}
     `;
     wireChartDatePicker();
+    renderMyProjectsSection();
     return;
   }
 
@@ -89,14 +91,87 @@ function refreshChart() {
     </div>
     <div class="chart-legend">${legend}</div>
     ${buildLast5DaysSection()}
+    ${buildMyProjectsPlaceholder()}
   `;
   wireChartDatePicker();
+  renderMyProjectsSection();
 }
 
 function wireChartDatePicker() {
   const picker = $('chartDatePicker');
   if (!picker) return;
   picker.addEventListener('change', () => onChartDatePicked(picker.value));
+}
+
+// ══════════════════════════════════════════════════
+// MY PROJECTS — all-time contribution per project: total hours and
+// total distinct days worked, shown as a candle per project (same
+// vertical-bar visual used for project performance elsewhere in the
+// app). Needs the employee's FULL history, not just the 10-day
+// window ENTRIES holds — fetched once and cached (MY_PROJECTS_CACHE),
+// then silently re-fetched in the background on every refreshChart()
+// call so it stays accurate after new saves without blocking the UI
+// (stale-while-revalidate: shows the cached view instantly, updates
+// once the fresh fetch resolves).
+// ══════════════════════════════════════════════════
+let MY_PROJECTS_CACHE = null;
+
+function buildMyProjectsPlaceholder() {
+  return `
+    <div style="margin-top:1.25rem;padding-top:1rem;border-top:1px solid var(--border);">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+        My Projects — All Time
+      </div>
+      <div id="myProjectsSection">${MY_PROJECTS_CACHE ? buildMyProjectsHtml(MY_PROJECTS_CACHE) : `<div style="font-size:11px;color:var(--muted);">Loading…</div>`}</div>
+    </div>`;
+}
+
+async function renderMyProjectsSection() {
+  try {
+    const all = await apiGetAllHistory(USER.id);
+    MY_PROJECTS_CACHE = all;
+    const el = $('myProjectsSection');
+    if (el) el.innerHTML = buildMyProjectsHtml(all); // still there? (user may have navigated away)
+  } catch(err) {
+    const el = $('myProjectsSection');
+    if (el && !MY_PROJECTS_CACHE) el.innerHTML = `<div style="font-size:11px;color:var(--muted);">Couldn't load project history.</div>`;
+  }
+}
+
+function buildMyProjectsHtml(allEntries) {
+  const worked = (allEntries || []).filter(e => e.status !== 'Leave' && e.project);
+  if (!worked.length) return `<div style="font-size:11px;color:var(--muted);">No project history yet.</div>`;
+
+  const map = {};
+  worked.forEach(e => {
+    if (!map[e.project]) map[e.project] = { hours: 0, days: new Set() };
+    map[e.project].hours += Number(e.hours) || 0;
+    map[e.project].days.add(e.date);
+  });
+
+  const projects = Object.entries(map)
+    .map(([name, d]) => ({ name, hours: d.hours, days: d.days.size }))
+    .sort((a, b) => b.hours - a.hours);
+
+  const maxHours = Math.max(...projects.map(p => p.hours), 0.01);
+
+  const candles = projects.map((p, i) => {
+    const fillPct = Math.max((p.hours / maxHours) * 100, 5);
+    const color   = CHART_PALETTE[i % CHART_PALETTE.length];
+    return `
+      <div style="flex:0 0 74px;display:flex;flex-direction:column;align-items:center;gap:5px;">
+        <div style="width:26px;height:90px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+          overflow:hidden;display:flex;flex-direction:column-reverse;" title="${esc(p.name)}: ${fmtHours(p.hours)} across ${p.days} day${p.days !== 1 ? 's' : ''}">
+          <div style="width:100%;height:${fillPct}%;background:${color};"></div>
+        </div>
+        <div style="font-size:9.5px;color:var(--txt1);font-weight:600;text-align:center;max-width:74px;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(p.name)}">${esc(p.name)}</div>
+        <div style="font-size:9px;color:var(--muted);">${fmtHours(p.hours)}</div>
+        <div style="font-size:9px;color:var(--muted);">${p.days} day${p.days !== 1 ? 's' : ''}</div>
+      </div>`;
+  }).join('');
+
+  return `<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;align-items:flex-end;">${candles}</div>`;
 }
 
 function rangeLabel() {
