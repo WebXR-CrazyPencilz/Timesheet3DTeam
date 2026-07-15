@@ -445,7 +445,7 @@ async function renderClientCards(content) {
         <div class="cp-tab-title">🏢 Clients</div>
         <div class="cp-tab-sub">${isManager ? 'Client ID is auto-generated and permanent once created.' : 'View each client\u2019s projects and progress.'}</div>
       </div>
-      ${isManager ? `<button id="cpNewClientBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Client</button>` : ''}
+      ${(isManager || CP_ROLE === 'tl') ? `<button id="cpNewClientBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Client</button>` : ''}
     </div>
 
     ${sorted.length === 0
@@ -630,8 +630,14 @@ function buildCandle(project, totals, totalHours, maxHours, showMoney, cost) {
 // Create (no client passed) or rename (client passed) — Manager only,
 // re-checked server-side too on delete.
 function openClientEditor(content, client = null, onDone = null) {
-  if (CP_ROLE !== 'manager') return;
   const isNew = !client;
+  // Creating is now Manager OR Team Leader; renaming an existing
+  // client (isNew === false) stays Manager-only — this function is
+  // never even opened in the rename path for a Team Leader, since
+  // buildClientCard only renders the edit pencil for isManager.
+  if (!isNew && CP_ROLE !== 'manager') return;
+  if (isNew && CP_ROLE !== 'manager' && CP_ROLE !== 'tl') return;
+
   const refresh = onDone || (() => renderClientCards(content));
 
   const overlay = document.createElement('div');
@@ -674,10 +680,10 @@ function openClientEditor(content, client = null, onDone = null) {
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
       if (isNew) {
-        await sheetGET({ action: 'createClientMaster', data: encodeURIComponent(JSON.stringify({ name })) });
+        await sheetGET({ action: 'createClientMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, name })) });
         toast?.('s', 'Client created', name);
       } else {
-        await sheetGET({ action: 'updateClientMaster', data: encodeURIComponent(JSON.stringify({ id: client.id, name })) });
+        await sheetGET({ action: 'updateClientMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, id: client.id, name })) });
         toast?.('s', 'Client updated', name);
       }
       overlay.remove();
@@ -725,7 +731,7 @@ function renderClientDetail(content, client) {
       </div>
       <div style="display:flex;gap:8px;">
         ${isManager ? `<button id="cpClientDetailEdit" class="cp-btn-ghost">✏️ Edit Client</button>` : ''}
-        ${isManager ? `<button id="cpClientAddProject" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ Add Project</button>` : ''}
+        ${(isManager || CP_ROLE === 'tl') ? `<button id="cpClientAddProject" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ Add Project</button>` : ''}
       </div>
     </div>
 
@@ -761,7 +767,7 @@ function renderProjectList(content) {
         <div class="cp-tab-title">📁 Projects</div>
         <div class="cp-tab-sub">Projects received from clients — status and view progress. Not a task board.</div>
       </div>
-      ${isManager ? `<button id="cpNewProjectBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Project</button>` : ''}
+      ${(isManager || CP_ROLE === 'tl') ? `<button id="cpNewProjectBtn" class="cp-btn-primary" style="padding:8px 16px;font-size:13px;border-radius:8px;">+ New Project</button>` : ''}
     </div>
 
     ${sortedProjects.length === 0
@@ -925,6 +931,15 @@ async function openProjectDetail(content, projectId, opts = {}) {
   const isManager = CP_ROLE === 'manager';
   const isTL      = CP_ROLE === 'tl';
 
+  // Manager can always edit the core project fields. Team Leader can
+  // ALSO edit them, but only while CREATING a new project — editing
+  // an EXISTING project's Name/ID/Client/Planned/Status stays
+  // Manager-only, same as before. Project Constant/Value are never
+  // part of this — Team Leader never sees or sets those, even when
+  // creating a project; they stay blank until a Manager fills them
+  // in via edit.
+  const canEditCore = isManager || (isNew && isTL);
+
   let suggestedId = '';
   if (isNew && isManager) {
     try { suggestedId = (await sheetGET({ action: 'getNextProjectId' })) || ''; } catch(e) { /* fine, manager types it manually */ }
@@ -936,24 +951,25 @@ async function openProjectDetail(content, projectId, opts = {}) {
         ${isNew ? '📁 New Project' : '📁 ' + esc(project.projectName || project.projectId)}
       </div>
       <div style="font-size:11.5px;color:var(--txt2);margin-bottom:1.1rem;">
-        ${isManager ? 'You can edit project details, status, and view progress.'
+        ${isNew && isTL ? 'You can create the project. Project Constant/Value are set later by the Manager.'
+        : isManager ? 'You can edit project details, status, and view progress.'
                     : 'You can update Views Completed. Project details and status are view-only here — Manager updates those.'}
       </div>
 
       <div class="cp-form-grid">
         <div class="cp-form-field cp-span2">
           <label class="cp-flabel">Project Name</label>
-          <input class="cp-finput" id="cpName" value="${esc(project.projectName)}" ${isManager ? '' : 'disabled'} placeholder="e.g. SPR Tower F&amp;G Floorplan"/>
+          <input class="cp-finput" id="cpName" value="${esc(project.projectName)}" ${canEditCore ? '' : 'disabled'} placeholder="e.g. SPR Tower F&amp;G Floorplan"/>
         </div>
 
         <div class="cp-form-field">
           <label class="cp-flabel">Project ID ${isNew && isManager ? '<span class="cp-hint">— suggested, editable</span>' : ''}</label>
-          <input class="cp-finput" id="cpId" value="${esc(isNew ? suggestedId : project.projectId)}" ${isManager ? '' : 'disabled'} placeholder="e.g. EUZ-042"/>
+          <input class="cp-finput" id="cpId" value="${esc(isNew ? suggestedId : project.projectId)}" ${canEditCore ? '' : 'disabled'} placeholder="e.g. EUZ-042"/>
         </div>
 
         <div class="cp-form-field">
           <label class="cp-flabel">Client</label>
-          <select class="cp-finput" id="cpClient" ${isManager ? '' : 'disabled'}>
+          <select class="cp-finput" id="cpClient" ${canEditCore ? '' : 'disabled'}>
             <option value="">— Select client —</option>
             ${CP_CLIENTS.map(c => `<option value="${esc(c.id)}" ${c.id === project.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
           </select>
@@ -972,12 +988,12 @@ async function openProjectDetail(content, projectId, opts = {}) {
 
         <div class="cp-form-field">
           <label class="cp-flabel">Views Planned</label>
-          <input class="cp-finput" id="cpPlanned" type="number" min="0" value="${project.plannedViews || ''}" ${isManager ? '' : 'disabled'} placeholder="e.g. 20"/>
+          <input class="cp-finput" id="cpPlanned" type="number" min="0" value="${project.plannedViews || ''}" ${canEditCore ? '' : 'disabled'} placeholder="e.g. 20"/>
         </div>
 
         <div class="cp-form-field">
           <label class="cp-flabel">Status</label>
-          <select class="cp-finput" id="cpStatus" ${isManager ? '' : 'disabled'}>
+          <select class="cp-finput" id="cpStatus" ${canEditCore ? '' : 'disabled'}>
             ${CP_STATUSES.map(s => `<option value="${s}" ${s === project.status ? 'selected' : ''}>${s}</option>`).join('')}
           </select>
         </div>
@@ -1052,6 +1068,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
 async function saveProjectFromForm(content, isNew, originalProject, onDone) {
   const btn = $('cpSaveBtn');
   const isManager = CP_ROLE === 'manager';
+  const isTL      = CP_ROLE === 'tl';
   const payload = { role: CP_ROLE };
 
   if (isManager) {
@@ -1071,7 +1088,27 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     payload.completedViews  = parseFloat($('cpCompleted').value) || 0;
     payload.managerNotes    = $('cpMgrNotes').value.trim();
     if (!isNew) payload.originalProjectId = originalProject.projectId;
+  } else if (isTL && isNew) {
+    // Team Leader creating a new project — same core fields a
+    // Manager would set, but never Project Constant/Value (Team
+    // Leader never sees those, even at creation — they stay blank
+    // until a Manager fills them in via edit).
+    const name     = $('cpName').value.trim();
+    const id       = $('cpId').value.trim();
+    const clientId = $('cpClient').value;
+    if (!name) { toast?.('e', 'Project Name is required'); return; }
+    if (!id)   { toast?.('e', 'Project ID is required');   return; }
+
+    payload.projectId      = id;
+    payload.projectName    = name;
+    payload.clientId       = clientId;
+    payload.plannedViews   = parseFloat($('cpPlanned').value) || 0;
+    payload.status         = $('cpStatus').value;
+    payload.teamLeaderNotes = $('cpTlNotes').value.trim();
   } else {
+    // Team Leader editing an EXISTING project — unchanged: only
+    // Views Completed and their own Notes, everything else here
+    // stays Manager-only.
     payload.originalProjectId = originalProject.projectId;
     payload.completedViews    = parseFloat($('cpCompleted').value) || 0;
     payload.teamLeaderNotes   = $('cpTlNotes').value.trim();
