@@ -151,10 +151,57 @@ function renderSlots() {
   if (!container) return;
 
   container.innerHTML = `
+    ${renderRecentProjectsSlider()}
     ${renderSlotBlock('morning')}
     ${renderLunchBlock()}
     ${renderSlotBlock('afternoon')}
   `;
+}
+
+// ── RECENT PROJECTS SLIDER (past 10 days) ─────────
+// ENTRIES is already the last-10-days dataset — Code.gs's
+// getHistory() only ever returns entries for the 10 most recent
+// dates with any activity — so this is purely an aggregation over
+// what's already loaded, no extra fetch needed. Gives the employee
+// a quick horizontal-scroll reminder of what they've been working
+// on recently before they start filling in today's entries.
+const RECENT_PROJ_PALETTE = ['#4f8ef7','#7c5cfc','#34d399','#fbbf24','#f87171','#22d3ee','#fb923c','#a78bfa','#f472b6','#84cc16'];
+
+function renderRecentProjectsSlider() {
+  const worked = (ENTRIES || []).filter(e => e.status !== 'Leave' && e.project);
+  if (!worked.length) return '';
+
+  const map = {};
+  worked.forEach(e => {
+    if (!map[e.project]) map[e.project] = { hours: 0, lastDate: '' };
+    map[e.project].hours += Number(e.hours) || 0;
+    if (e.date > map[e.project].lastDate) map[e.project].lastDate = e.date;
+  });
+
+  // Most recently worked-on project first, ties broken by total hours.
+  const projects = Object.entries(map)
+    .map(([name, d]) => ({ name, ...d }))
+    .sort((a, b) => b.lastDate.localeCompare(a.lastDate) || b.hours - a.hours);
+
+  const chips = projects.map((p, i) => `
+    <div style="flex-shrink:0;display:flex;align-items:center;gap:6px;
+      background:var(--surface2);border:1px solid var(--border);border-radius:20px;
+      padding:7px 14px;white-space:nowrap;">
+      <span style="width:7px;height:7px;border-radius:50%;background:${RECENT_PROJ_PALETTE[i % RECENT_PROJ_PALETTE.length]};flex-shrink:0;"></span>
+      <span style="font-size:12px;color:var(--txt1);font-weight:600;max-width:170px;
+        overflow:hidden;text-overflow:ellipsis;" title="${esc(p.name)}">${esc(p.name)}</span>
+      <span style="font-size:11px;color:var(--txt2);">— ${fh(p.hours)}</span>
+    </div>`).join('');
+
+  return `
+    <div style="margin-bottom:1.1rem;">
+      <div style="font-size:11px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">
+        Your Projects · Last 10 Days
+      </div>
+      <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch;">
+        ${chips}
+      </div>
+    </div>`;
 }
 
 // ── RENDER ONE SLOT BLOCK ─────────────────────────
@@ -286,7 +333,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Greeding', 'Unreal Engine', 'Training R&D' ].map(t =>
+            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Grading', 'Editing', '2D Floorplan', 'Unreal Engine', 'Training R&D' ].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>

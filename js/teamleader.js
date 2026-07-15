@@ -245,13 +245,25 @@ function renderTLEmpCards() {
   });
 
   // Monthly summary
-  const curMonth = todayStr().slice(0,7);
+  const curMonth  = todayStr().slice(0,7);
+  const last5Dates = [];
+  for (let i = 1; i <= 5; i++) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    last5Dates.push(d.toISOString().slice(0, 10));
+  }
   Object.values(empMap).forEach(emp => {
     const me = TL_DATA.filter(e => e.empId===emp.id && e.date.startsWith(curMonth));
     const mw = me.filter(e => e.status!=='Leave');
     emp.monthHours  = mw.reduce((s,e) => s+tlParseH(e.hours), 0);
     emp.monthDays   = new Set(mw.map(e=>e.date)).size;
     emp.monthLeaves = me.filter(e=>e.status==='Leave').length;
+
+    // Attendance for the past 5 days — always shown regardless of
+    // which range (15 Days/Week/Month/All Time) is currently
+    // selected, same as manager.js. Each day's check-in/check-out/
+    // duration is computed via getTLDayAttendance, reused below for
+    // the date picker so a custom date uses the exact same logic.
+    emp.attendance5 = last5Dates.map(d => ({ date: d, ...getTLDayAttendance(emp.id, d) }));
 
     // "Last entered" means last TIMESHEET ACTIVITY — whoever most
     // recently logged an actual entry — not when their employee
@@ -287,6 +299,56 @@ function renderTLEmpCards() {
       else toast?.('e', 'Employee Detail unavailable', 'emp-detail.js is not loaded.');
     });
   });
+
+  content.querySelectorAll('.att-date-picker').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const empId  = inp.dataset.empId;
+      const picked = inp.value;
+      const listEl = $(`attList-${empId}`);
+      if (!picked || !listEl) return;
+
+      const rec = getTLDayAttendance(empId, picked);
+      listEl.innerHTML = `
+        ${buildTLAttendanceRows([{ ...rec, label: tlFmtDate(picked) }])}
+        <button class="att-reset-btn" style="margin-top:6px;background:none;border:none;
+          color:var(--a1);font-size:10.5px;font-weight:600;cursor:pointer;padding:0;">← Back to Last 5 Days</button>`;
+
+      listEl.querySelector('.att-reset-btn')?.addEventListener('click', () => {
+        const emp = rows.find(e => e.id === empId);
+        if (emp) listEl.innerHTML = buildTLAttendanceRows(emp.attendance5.map(a => ({ ...a, label: tlFmtDate(a.date) })));
+        inp.value = '';
+      });
+    });
+  });
+}
+
+// Renders one row per attendance record — used both for the default
+// past-5-days list and the date picker's single custom-date result.
+function buildTLAttendanceRows(records) {
+  if (!records.length) return `<div style="font-size:11px;color:var(--txt2);">No data</div>`;
+  return records.map(r => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;
+      border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap;">
+      <span style="font-size:10.5px;color:var(--txt2);min-width:64px;flex-shrink:0;">${esc(r.label)}</span>
+      ${r.hasEntry ? `
+        <span style="font-size:11px;color:var(--txt1);white-space:nowrap;">
+          <b>In</b> ${tlFmt12(r.checkIn)} <span style="color:var(--txt2);">→</span> <b>Out</b> ${tlFmt12(r.checkOut)}
+        </span>
+        <span style="font-size:11px;font-weight:700;color:var(--a1);white-space:nowrap;">${fh(r.hours)}</span>`
+        : `<span style="font-size:11px;color:var(--txt2);">No entry</span>`}
+    </div>`).join('');
+}
+
+// Check-in / check-out / worked-duration for one employee on one
+// specific date — same logic used for the default 5-day list and
+// the date picker's custom lookup.
+function getTLDayAttendance(empId, date) {
+  const entries = TL_DATA.filter(e => e.empId === empId && e.date === date && e.status !== 'Leave');
+  if (!entries.length) return { hasEntry: false, checkIn: null, checkOut: null, hours: 0 };
+  const timesIn  = entries.map(e => e.timeIn).filter(Boolean).sort();
+  const timesOut = entries.map(e => e.timeOut).filter(Boolean).sort();
+  const hours    = entries.reduce((s, e) => s + tlParseH(e.hours), 0);
+  return { hasEntry: true, checkIn: timesIn[0] || null, checkOut: timesOut[timesOut.length - 1] || null, hours };
 }
 
 // ── EMPLOYEE CARD ─────────────────────────────────
@@ -427,6 +489,19 @@ function buildTLEmpCard(emp) {
             white-space:nowrap;flex-shrink:0;">
           View Details →
         </button>
+      </div>
+
+      <!-- Attendance: past 5 days + date picker for any custom day -->
+      <div class="att-widget" style="margin-bottom:1rem;padding:8px 12px;background:var(--surface2);border-radius:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:6px;">
+          <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Attendance</div>
+          <input type="date" class="att-date-picker" data-emp-id="${emp.id}" max="${todayStr()}"
+            style="background:var(--surface1);border:1px solid var(--border);border-radius:6px;
+            color:var(--txt1);font-size:10.5px;padding:3px 6px;cursor:pointer;"/>
+        </div>
+        <div class="att-list" id="attList-${emp.id}">
+          ${buildTLAttendanceRows(emp.attendance5.map(a => ({ ...a, label: tlFmtDate(a.date) })))}
+        </div>
       </div>
 
       <!-- Donut LEFT + Legend RIGHT -->

@@ -371,6 +371,12 @@ function buildActivityRow(day) {
       ).join('')}</div>`
     : `<div class="act-bar"></div>`;
 
+  const checkTimesHtml = (day.checkIn || day.checkOut)
+    ? `<span class="act-checktimes" style="font-size:11px;color:var(--txt2);white-space:nowrap;">
+         <b style="color:var(--txt1);">${fmt12Time(day.checkIn)}</b> → <b style="color:var(--txt1);">${fmt12Time(day.checkOut)}</b>
+       </span>`
+    : '';
+
   const isForceEntry = day.statusKey === 'force_entry';
   const rowClass = isForceEntry ? 'act-row act-row-clickable' : 'act-row';
   const rowAttrs = [
@@ -383,6 +389,7 @@ function buildActivityRow(day) {
     <div class="${rowClass}" ${rowAttrs}>
       <span class="act-date-pill">${day.dateLabel}</span>
       <span class="act-status-pill" style="background:${meta.bg};color:${meta.fg};">${meta.icon} ${meta.label}${infoIcon}</span>
+      ${checkTimesHtml}
       ${barHtml}
       <span class="act-total">${day.totalHours > 0 ? fmtH(day.totalHours) : '—'}</span>
     </div>`;
@@ -410,6 +417,15 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
     });
     const projects = Object.entries(projMap).sort((a, b) => b[1] - a[1]);
 
+    // Earliest logged Time In / latest logged Time Out for the day —
+    // same check-in/check-out data now shown on the employee card's
+    // Attendance widget, surfaced here too so it's visible in both
+    // places, not just the card.
+    const timesIn  = worked.map(e => e.timeIn).filter(Boolean).sort();
+    const timesOut = worked.map(e => e.timeOut).filter(Boolean).sort();
+    const checkIn   = timesIn[0] || null;
+    const checkOut  = timesOut[timesOut.length - 1] || null;
+
     rows.push(buildActivityRow({
       dateStr,
       dateLabel: new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
@@ -417,6 +433,8 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
       statusKey: getDayStatus(dateStr, dayEntries),
       totalHours,
       projects,
+      checkIn,
+      checkOut,
     }));
   }
 
@@ -723,4 +741,14 @@ function fmtH(h) {
   if (hr === 0) return `${mn}m`;
   if (mn === 0) return `${hr}h`;
   return `${hr}h ${mn}m`;
+}
+
+// Self-contained on purpose — this page is shared by both Manager
+// and Team Leader (see getEmpDetailContainer/returnToPortalHome
+// above), so it shouldn't depend on either portal's own fmt12/
+// tlFmt12 helper.
+function fmt12Time(t) {
+  if (!t) return '--:--';
+  const [h, m] = t.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
