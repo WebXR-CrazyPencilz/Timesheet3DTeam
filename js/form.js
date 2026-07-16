@@ -333,7 +333,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Greeding', 'Unreal Engine', 'Training R&D' ].map(t =>
+            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development','Editing','2D FloorPlan','Editing & Grading', 'Unreal Engine', 'Training R&D' ].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
