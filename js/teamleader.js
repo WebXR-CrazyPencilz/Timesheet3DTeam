@@ -151,7 +151,7 @@ function renderTLTab() {
 // ══════════════════════════════════════════════════
 function renderTLEmployeesTab(content) {
   const filtered = getTLFiltered();
-  const worked   = filtered.filter(e => e.status !== 'Leave');
+  const worked   = filtered.filter(isWorkedEntry);
   const totHours = tlCalcHours(worked);
 
   content.innerHTML = `
@@ -207,7 +207,7 @@ function renderTLEmpCards() {
   const content  = $('tlEmpCards');
   if (!content) return;
   const filtered = getTLFiltered();
-  const worked   = filtered.filter(e => e.status !== 'Leave');
+  const worked   = filtered.filter(isWorkedEntry);
 
   // Update summary strip
   const tlTot     = $('tlTot');     if (tlTot)     tlTot.textContent     = fh(tlCalcHours(worked));
@@ -249,14 +249,18 @@ function renderTLEmpCards() {
   const last5Dates = [];
   for (let i = 1; i <= 5; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    last5Dates.push(d.toISOString().slice(0, 10));
+    last5Dates.push(toLocalDateStr(d));
   }
   Object.values(empMap).forEach(emp => {
     const me = TL_DATA.filter(e => e.empId===emp.id && e.date.startsWith(curMonth));
-    const mw = me.filter(e => e.status!=='Leave');
+    const mw = me.filter(isWorkedEntry);
     emp.monthHours  = mw.reduce((s,e) => s+tlParseH(e.hours), 0);
     emp.monthDays   = new Set(mw.map(e=>e.date)).size;
-    emp.monthLeaves = me.filter(e=>e.status==='Leave').length;
+    // Unique DATES with a Leave entry, not raw entry count — same fix
+    // as manager.js. The partial-permission Leave feature lets one
+    // day have two Leave entries (morning + afternoon windows), which
+    // was inflating this to 2x the real number of leave days.
+    emp.monthLeaves = new Set(me.filter(e=>e.status==='Leave').map(e => e.date)).size;
 
     // Attendance for the past 5 days — always shown regardless of
     // which range (15 Days/Week/Month/All Time) is currently
@@ -343,7 +347,7 @@ function buildTLAttendanceRows(records) {
 // specific date — same logic used for the default 5-day list and
 // the date picker's custom lookup.
 function getTLDayAttendance(empId, date) {
-  const entries = TL_DATA.filter(e => e.empId === empId && e.date === date && e.status !== 'Leave');
+  const entries = TL_DATA.filter(e => e.empId === empId && e.date === date).filter(isWorkedEntry);
   if (!entries.length) return { hasEntry: false, checkIn: null, checkOut: null, hours: 0 };
   const timesIn  = entries.map(e => e.timeIn).filter(Boolean).sort();
   const timesOut = entries.map(e => e.timeOut).filter(Boolean).sort();
@@ -421,7 +425,7 @@ function buildTLEmpCard(emp) {
   let dayInfoHtml = '';
   if (isDayView && totalHours > 0) {
     const selDate  = getTL15Days()[TL_DAY_OFFSET];
-    const dayEnts  = TL_DATA.filter(e=>e.empId===emp.id&&e.date===selDate&&e.status!=='Leave');
+    const dayEnts  = TL_DATA.filter(e=>e.empId===emp.id&&e.date===selDate).filter(isWorkedEntry);
     const timesIn  = dayEnts.map(e=>e.timeIn).filter(Boolean).sort();
     const timesOut = dayEnts.map(e=>e.timeOut).filter(Boolean).sort();
     const tIn      = timesIn[0] || null;
@@ -481,8 +485,8 @@ function buildTLEmpCard(emp) {
             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(emp.name)}</div>
           <div style="font-size:11px;color:var(--txt2);">${esc(emp.team)}</div>
         </div>
-        ${emp.leaves>0?`<span style="background:rgba(251,191,36,0.15);color:#fbbf24;
-          border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600;">${emp.leaves}L</span>`:''}
+        ${emp.monthLeaves>0?`<span style="background:rgba(251,191,36,0.15);color:#fbbf24;
+          border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600;" title="Leaves this month">${emp.monthLeaves}L</span>`:''}
         <button class="view-emp-btn" data-emp-id="${emp.id}" data-emp-name="${esc(emp.name)}"
           style="background:var(--a1);color:#fff;border:none;border-radius:6px;
             padding:5px 12px;font-size:10px;font-weight:600;cursor:pointer;
@@ -572,7 +576,7 @@ function buildTLMonthPicker() {
   const now=new Date();
   for(let i=0;i<12;i++){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    months.push({val:d.toISOString().slice(0,7),label:d.toLocaleDateString('en-IN',{month:'short',year:'numeric'})});
+    months.push({val:toLocalDateStr(d).slice(0,7),label:d.toLocaleDateString('en-IN',{month:'short',year:'numeric'})});
   }
   picker.innerHTML=months.map(m=>`<button data-month="${m.val}" style="flex-shrink:0;padding:5px 14px;border-radius:20px;
     border:1px solid ${m.val===TL_MONTH?'var(--a1)':'var(--border)'};
@@ -612,15 +616,15 @@ function getTLWorkingDays() {
     start=TL_MONTH+'-01';
     end=TL_MONTH+'-'+String(new Date(y,m,0).getDate()).padStart(2,'0');
     if (end>tod) end=tod;
-  } else { const d=new Date(); d.setDate(d.getDate()-90); start=d.toISOString().slice(0,10); end=tod; }
+  } else { const d=new Date(); d.setDate(d.getDate()-90); start=toLocalDateStr(d); end=tod; }
   const dates=[]; const cur=new Date(start+'T00:00:00'); const endDate=new Date(end+'T00:00:00');
-  while(cur<=endDate){ const day=cur.getDay(); if(day!==0&&day!==6) dates.push(cur.toISOString().slice(0,10)); cur.setDate(cur.getDate()+1); }
+  while(cur<=endDate){ const day=cur.getDay(); if(day!==0&&day!==6) dates.push(toLocalDateStr(cur)); cur.setDate(cur.getDate()+1); }
   return dates;
 }
 
 function getTL15Days() {
   const dates=[];
-  for(let i=0;i<15;i++){ const d=new Date(); d.setDate(d.getDate()-i); dates.push(d.toISOString().slice(0,10)); }
+  for(let i=0;i<15;i++){ const d=new Date(); d.setDate(d.getDate()-i); dates.push(toLocalDateStr(d)); }
   return dates;
 }
 
@@ -648,7 +652,24 @@ function tlDonutPath(cx,cy,ro,ri,s,e) {
 function tlPt(cx,cy,r,deg){ const rad=deg*Math.PI/180; return {x:+(cx+r*Math.cos(rad)).toFixed(3),y:+(cy+r*Math.sin(rad)).toFixed(3)}; }
 
 // ── HELPERS ───────────────────────────────────────
-function tlCalcHours(arr) { return arr.filter(e=>e.status!=='Leave').reduce((s,e)=>s+tlParseH(e.hours),0); }
+// ── HELPERS ───────────────────────────────────────
+// Timezone-safe 'YYYY-MM-DD' from a Date's LOCAL components — same
+// fix as manager.js. Every .toISOString().slice(0,N) call in this
+// file was silently wrong in any UTC+ timezone (like IST): a date
+// built at local midnight (e.g. the 1st of a month) rolls back to
+// the previous day/month once converted to UTC by toISOString() —
+// exactly the "Jul 2026 button loads June data" bug.
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// Same fix as manager.js — an entry only counts as "worked" if it's
+// neither Leave nor Holiday. Filters checking `status !== 'Leave'`
+// alone let Holiday entries through as if they were worked days
+// (0 hours, but still inflating "Days" totals).
+function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday'; }
+
+function tlCalcHours(arr) { return arr.filter(isWorkedEntry).reduce((s,e)=>s+tlParseH(e.hours),0); }
 
 function tlParseH(val) {
   if(!val) return 0;

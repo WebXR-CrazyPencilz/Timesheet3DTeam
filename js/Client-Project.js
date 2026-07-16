@@ -251,14 +251,14 @@ function ensureCPStyles() {
     }
     .cp-form-grid .cp-form-field.cp-span2 { grid-column:1 / -1; }
     .cp-hint { font-size:10.5px;color:var(--txt2);font-weight:400; }
-    .cp-nav-btn {
-      width:28px;height:28px;border-radius:50%;border:1px solid var(--border-md);
-      background:var(--elevated);color:var(--txt1);font-size:12px;cursor:pointer;
-      display:flex;align-items:center;justify-content:center;flex-shrink:0;
+    .cp-pager-btn {
+      padding:6px 12px;border-radius:7px;border:1px solid var(--border-md);
+      background:var(--elevated);color:var(--txt2);font-size:11.5px;font-weight:600;cursor:pointer;
     }
-    .cp-nav-btn:disabled { opacity:.3;cursor:default; }
-    .cp-bar-track { background:var(--surface2);border-radius:4px;height:6px;overflow:hidden; }
-    .cp-bar-fill { height:100%;border-radius:4px;background:var(--a1); }
+    .cp-pager-btn:hover:not(:disabled) { color:var(--txt1);border-color:var(--a1); }
+    .cp-pager-btn:disabled { opacity:.35;cursor:default; }
+    .cp-pager-btn.active { background:var(--a1);color:#fff;border-color:var(--a1); }
+    .cp-pager-num { min-width:30px;text-align:center; }
 
     /* ── Card grid (Client + Project tabs) ─────────────────────── */
     .cp-tab-header {
@@ -278,14 +278,12 @@ function ensureCPStyles() {
       display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
       gap:1.5rem;margin-top:.5rem;
     }
-    /* Main Project tab (the landing page) — fixed 2 cards per row
-       instead of auto-fill, so each card gets much more width to work
-       with. Scoped to #cpProjectGrid only: Client cards and a
-       client's own scoped project grid on the Client Detail page
-       keep the denser auto-fill layout — this was requested
-       specifically for the front-page Project listing. */
+    /* Main Project tab (the landing page) — one card per row, full
+       width. Scoped to #cpProjectGrid only: a client's own scoped
+       project grid on the Client Detail page keeps the denser
+       auto-fill layout. */
     #cpProjectGrid {
-      grid-template-columns:repeat(2,1fr);
+      grid-template-columns:1fr;
     }
     /* Client grid — one client per row, full width, so there's room
        for the per-project performance candles inside each card. */
@@ -837,6 +835,9 @@ function buildProjectCard(p, isManager, costResult) {
     }
   }
 
+  // Basic details only, by design — Team Hours, Timeline, Notes, and
+  // the full Cost breakdown all live one click away on the Project
+  // Detail page. This card is a scan-list entry, not a dashboard.
   return `
     <div class="cp-entity-card">
       <div class="cp-entity-head">
@@ -860,20 +861,12 @@ function buildProjectCard(p, isManager, costResult) {
           <div class="cp-metric-label">Completed</div>
           <div class="cp-metric-val">${p.completedViews || 0}</div>
         </div>
+        <div class="cp-metric-box">
+          <div class="cp-metric-label">Start Date</div>
+          <div class="cp-metric-val" style="font-size:14px;">${fmtCPDateShort(p.startDate)}</div>
+        </div>
         ${profitBox}
       </div>
-
-      <div style="margin-bottom:.9rem;">
-        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Team Hours</div>
-        ${buildProjectHoursBar(p)}
-      </div>
-
-      <div style="margin-bottom:.9rem;">
-        <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Timeline</div>
-        ${buildProjectTimelineMini(p)}
-      </div>
-
-      ${buildProjectNotesPreview(p)}
 
       <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}">View Details →</button>
     </div>`;
@@ -923,7 +916,8 @@ async function openProjectDetail(content, projectId, opts = {}) {
   const isNew = !projectId;
   const project = isNew
     ? { projectId: '', projectName: '', clientId: presetClientId, projectConstant: '', projectValue: 0,
-        plannedViews: 0, completedViews: 0, status: 'In Progress', managerNotes: '', teamLeaderNotes: '' }
+        plannedViews: 0, completedViews: 0, status: 'In Progress', managerNotes: '', teamLeaderNotes: '',
+        startDate: '', endDate: '' }
     : CP_PROJECTS.find(p => p.projectId === projectId);
 
   if (!isNew && !project) { toast?.('e', 'Project not found', projectId); return; }
@@ -940,6 +934,11 @@ async function openProjectDetail(content, projectId, opts = {}) {
   // in via edit.
   const canEditCore = isManager || (isNew && isTL);
 
+  // Start Date/End Date are a deliberate exception to canEditCore:
+  // Team Leader can edit these on an EXISTING project too, not just
+  // at creation — everything else stays governed by canEditCore.
+  const canEditDates = isManager || isTL;
+
   let suggestedId = '';
   if (isNew && isManager) {
     try { suggestedId = (await sheetGET({ action: 'getNextProjectId' })) || ''; } catch(e) { /* fine, manager types it manually */ }
@@ -953,7 +952,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
       <div style="font-size:11.5px;color:var(--txt2);margin-bottom:1.1rem;">
         ${isNew && isTL ? 'You can create the project. Project Constant/Value are set later by the Manager.'
         : isManager ? 'You can edit project details, status, and view progress.'
-                    : 'You can update Views Completed. Project details and status are view-only here — Manager updates those.'}
+                    : 'You can update Views Completed and Start/End Date. Other project details and status are view-only here — Manager updates those.'}
       </div>
 
       <div class="cp-form-grid">
@@ -996,6 +995,16 @@ async function openProjectDetail(content, projectId, opts = {}) {
           <select class="cp-finput" id="cpStatus" ${canEditCore ? '' : 'disabled'}>
             ${CP_STATUSES.map(s => `<option value="${s}" ${s === project.status ? 'selected' : ''}>${s}</option>`).join('')}
           </select>
+        </div>
+
+        <div class="cp-form-field">
+          <label class="cp-flabel">Start Date</label>
+          <input class="cp-finput" id="cpStartDate" type="date" value="${esc(project.startDate)}" ${canEditDates ? '' : 'disabled'}/>
+        </div>
+
+        <div class="cp-form-field">
+          <label class="cp-flabel">End Date</label>
+          <input class="cp-finput" id="cpEndDate" type="date" value="${esc(project.endDate)}" ${canEditDates ? '' : 'disabled'}/>
         </div>
 
         <div class="cp-form-field">
@@ -1050,8 +1059,13 @@ async function openProjectDetail(content, projectId, opts = {}) {
       </div>`;
 
   content.innerHTML = `
-    <div style="margin-bottom:1rem;">
+    <div style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
       <button id="cpProjBack" class="cp-back-btn">← Back</button>
+      ${!isNew ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="cpReportMonth" class="cp-btn-ghost">📥 This Month</button>
+          <button id="cpReportOverall" class="cp-btn-ghost">📥 Overall Report</button>
+        </div>` : ''}
     </div>
     ${bodyHtml}
   `;
@@ -1059,6 +1073,8 @@ async function openProjectDetail(content, projectId, opts = {}) {
   $('cpProjBack').addEventListener('click', goBack);
   $('cpSaveBtn').addEventListener('click', () => saveProjectFromForm(content, isNew, project, goBack));
   $('cpDeleteBtn')?.addEventListener('click', () => deleteProjectFromForm(content, project, goBack));
+  $('cpReportMonth')?.addEventListener('click', () => openProjectReport(project, 'month'));
+  $('cpReportOverall')?.addEventListener('click', () => openProjectReport(project, 'overall'));
 
   if (!isNew) renderProjectTimelineSection(project);
   if (!isNew) renderProjectTeamSection(project);
@@ -1085,6 +1101,8 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     payload.projectValue    = parseFloat($('cpValue').value) || 0;
     payload.plannedViews    = parseFloat($('cpPlanned').value) || 0;
     payload.status          = $('cpStatus').value;
+    payload.startDate       = $('cpStartDate').value;
+    payload.endDate         = $('cpEndDate').value;
     payload.completedViews  = parseFloat($('cpCompleted').value) || 0;
     payload.managerNotes    = $('cpMgrNotes').value.trim();
     if (!isNew) payload.originalProjectId = originalProject.projectId;
@@ -1104,13 +1122,18 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
     payload.clientId       = clientId;
     payload.plannedViews   = parseFloat($('cpPlanned').value) || 0;
     payload.status         = $('cpStatus').value;
+    payload.startDate      = $('cpStartDate').value;
+    payload.endDate        = $('cpEndDate').value;
     payload.teamLeaderNotes = $('cpTlNotes').value.trim();
   } else {
-    // Team Leader editing an EXISTING project — unchanged: only
-    // Views Completed and their own Notes, everything else here
-    // stays Manager-only.
+    // Team Leader editing an EXISTING project — Views Completed,
+    // their own Notes, and now Start/End Date. Everything else
+    // (Name/ID/Client/Constant/Value/Planned/Status) stays
+    // Manager-only.
     payload.originalProjectId = originalProject.projectId;
     payload.completedViews    = parseFloat($('cpCompleted').value) || 0;
+    payload.startDate         = $('cpStartDate').value;
+    payload.endDate           = $('cpEndDate').value;
     payload.teamLeaderNotes   = $('cpTlNotes').value.trim();
   }
 
@@ -1360,18 +1383,21 @@ function renderProjectTimelineSection(project) {
   const totalHours    = months.reduce((s, m) => s + m.hours, 0);
   const activeMonths  = months.filter(m => m.hours > 0).length;
 
-  const columns = months.map(m => {
-    const pct   = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 4) : 0;
-    const isNow = m.month === nowMonth;
+  // Horizontal bar per month (label left, bar middle, duration
+  // right) — same visual language as the Attendance & Activity list
+  // on the Employee Detail page, instead of the old vertical candles.
+  const rows = months.map((m, i) => {
+    const pct    = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 2) : 0;
+    const isNow  = m.month === nowMonth;
+    const isLast = i === months.length - 1;
     return `
-      <div style="flex:0 0 56px;display:flex;flex-direction:column;align-items:center;gap:6px;"
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 0;${isLast ? '' : 'border-bottom:1px solid var(--border);'}"
         title="${esc(fmtCPMonthLabel(m.month))}: ${fmtHM(m.hours)}${m.memberCount ? ' · ' + m.memberCount + ' member' + (m.memberCount !== 1 ? 's' : '') : ''}">
-        <div style="font-size:9.5px;color:var(--txt2);font-weight:600;white-space:nowrap;">${esc(fmtMonthShort(m.month))}</div>
-        <div style="width:22px;height:70px;background:var(--surface2);border-radius:6px;display:flex;
-          align-items:flex-end;overflow:hidden;${isNow ? 'outline:1.5px solid var(--a1);outline-offset:1px;' : ''}">
-          <div style="width:100%;height:${pct}%;background:var(--a1);border-radius:6px;"></div>
+        <span style="flex:0 0 84px;font-size:12px;font-weight:700;color:${isNow ? 'var(--a1)' : 'var(--txt1)'};white-space:nowrap;">${esc(fmtMonthShort(m.month))}${isNow ? ' •' : ''}</span>
+        <div style="flex:1;min-width:0;height:12px;background:var(--surface2);border-radius:6px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:var(--a1);border-radius:6px;"></div>
         </div>
-        <div style="font-size:9.5px;color:${m.hours > 0 ? 'var(--txt1)' : 'var(--txt2)'};font-weight:${m.hours > 0 ? '700' : '400'};">${m.hours > 0 ? fmtHM(m.hours) : '—'}</div>
+        <span style="flex:0 0 68px;text-align:right;font-size:12px;font-weight:${m.hours > 0 ? '700' : '400'};color:${m.hours > 0 ? 'var(--txt1)' : 'var(--txt2)'};">${m.hours > 0 ? fmtHM(m.hours) : '—'}</span>
       </div>`;
   }).join('');
 
@@ -1381,98 +1407,430 @@ function renderProjectTimelineSection(project) {
         <div style="font-weight:700;font-size:14px;color:var(--txt1);">📅 Project Timeline</div>
         <div style="font-size:11.5px;color:var(--txt2);">Since ${esc(startLabel)} · ${activeMonths}/${months.length} active month${months.length !== 1 ? 's' : ''} · ${fmtHM(totalHours)} total</div>
       </div>
-      <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;">${columns}</div>
+      <div>${rows}</div>
     </div>`;
 }
 
-// State for the currently-open project's Team & Hours slider. Reset
-// each time renderProjectTeamSection runs (only one project detail
-// page is ever open at once).
-let CP_TEAM_MONTHS = [];
-let CP_TEAM_IDX    = 0;
+// ══════════════════════════════════════════════════════════════
+// TEAM PERFORMANCE — day-by-day activity log (was "Team & Hours").
+// For each day this project had any activity: how many people
+// worked, a segmented bar showing their relative hours that day (one
+// color per employee, reusing getEmployeeColor so a person's color
+// stays consistent everywhere), and each person's own hours + notes
+// for that specific day underneath. Paginated 10 days per page, most
+// recent first — getProjectTeamActivity (month-based) is still used
+// elsewhere in this file (Client cards, the public API hook), so
+// it's untouched; this is a separate, purpose-built aggregation.
+// ══════════════════════════════════════════════════════════════
+const CP_TEAM_PAGE_SIZE = 10;
+let CP_TEAM_DAILY_DATES  = [];
+let CP_TEAM_DAILY_BYDATE = {};
+let CP_TEAM_PAGE         = 0;
+
+// Groups this project's entries by date, then by employee within
+// each date (one person can have multiple entries the same day
+// across different slots — those are summed, and their notes joined
+// together for that day).
+function getProjectDailyActivity(project) {
+  const byDate = {};
+  CP_TIMESHEET_DATA.forEach(e => {
+    if (e.project !== project.projectName || e.status === 'Leave' || !e.date) return;
+    if (!byDate[e.date]) byDate[e.date] = {};
+    if (!byDate[e.date][e.empId]) byDate[e.date][e.empId] = { hours: 0, notes: [] };
+    byDate[e.date][e.empId].hours += parseH(e.hours);
+    if (e.notes && e.notes.trim()) byDate[e.date][e.empId].notes.push(e.notes.trim());
+  });
+
+  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a)); // most recent first
+  return { byDate, dates };
+}
+
+// ══════════════════════════════════════════════════════════════
+// PROJECT REPORT — a properly formatted, printable report: a
+// contribution pie chart, an hours-by-person bar chart, a detailed
+// day-by-day log with everyone's notes, and an auto-written summary.
+// Two modes:
+//   'month'   — the current calendar month only
+//   'overall' — from the project's Start Date (or its earliest
+//               logged activity, whichever is earlier) through today
+//
+// No PDF library is used — this builds a clean, print-optimized HTML
+// document in a new tab and triggers the browser's own Print dialog,
+// where "Save as PDF" is a standard destination on every major
+// browser. Keeps this dependency-free, consistent with the rest of
+// the app.
+// ══════════════════════════════════════════════════════════════
+const CP_REPORT_PALETTE = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#db2777','#65a30d'];
+
+// Hours + notes contributed by each team member within [fromDate,
+// toDate] (inclusive, 'YYYY-MM-DD' strings — safe to compare
+// lexicographically). Independent of getProjectDailyActivity/
+// getProjectMonthlyTimeline (which always cover ALL history) since
+// a report needs an arbitrary bounded window.
+function getProjectContribution(project, fromDate, toDate) {
+  const entries = CP_TIMESHEET_DATA.filter(e =>
+    e.project === project.projectName && e.status !== 'Leave' &&
+    e.date && e.date >= fromDate && e.date <= toDate
+  );
+
+  const byEmp   = {};
+  const allDays = new Set();
+  entries.forEach(e => {
+    allDays.add(e.date);
+    if (!byEmp[e.empId]) byEmp[e.empId] = { hours: 0, days: new Set(), notes: [] };
+    byEmp[e.empId].hours += parseH(e.hours);
+    byEmp[e.empId].days.add(e.date);
+    if (e.notes && e.notes.trim()) byEmp[e.empId].notes.push({ date: e.date, note: e.notes.trim(), hours: parseH(e.hours) });
+  });
+
+  const members = Object.entries(byEmp)
+    .map(([empId, d]) => {
+      const emp = CP_EMPLOYEES.find(x => x.id === empId);
+      return { empId, name: emp ? emp.name : empId, hours: d.hours, days: d.days.size, notes: d.notes };
+    })
+    .sort((a, b) => b.hours - a.hours);
+
+  return { members, totalHours: members.reduce((s, m) => s + m.hours, 0), totalDays: allDays.size, fromDate, toDate };
+}
+
+function buildReportDonutPath(cx, cy, rOuter, rInner, startDeg, endDeg) {
+  if (endDeg - startDeg >= 359.999) endDeg = startDeg + 359.999;
+  const pt = (r, deg) => { const rad = deg * Math.PI / 180; return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }; };
+  const sO = pt(rOuter, startDeg), eO = pt(rOuter, endDeg), sI = pt(rInner, endDeg), eI = pt(rInner, startDeg);
+  const largeArc = (endDeg - startDeg) > 180 ? 1 : 0;
+  return [`M ${sO.x} ${sO.y}`, `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${eO.x} ${eO.y}`, `L ${sI.x} ${sI.y}`, `A ${rInner} ${rInner} 0 ${largeArc} 0 ${eI.x} ${eI.y}`, 'Z'].join(' ');
+}
+
+function buildReportPieSVG(members, totalHours) {
+  if (!totalHours || !members.length) {
+    return `<svg viewBox="0 0 200 200" width="180" height="180"><circle cx="100" cy="100" r="80" fill="none" stroke="#e2e8f0" stroke-width="26"/></svg>`;
+  }
+  let angle = -90;
+  const slices = members.map((m, i) => {
+    const end = angle + (m.hours / totalHours) * 360;
+    const path = buildReportDonutPath(100, 100, 80, 46, angle, end);
+    const color = CP_REPORT_PALETTE[i % CP_REPORT_PALETTE.length];
+    angle = end;
+    return `<path d="${path}" fill="${color}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 200 200" width="180" height="180" xmlns="http://www.w3.org/2000/svg">${slices}</svg>`;
+}
+
+function buildReportLegendHTML(members, totalHours) {
+  if (!members.length) return `<div style="font-size:12px;color:#64748b;">No contributions recorded for this period.</div>`;
+  return members.map((m, i) => {
+    const pct = totalHours > 0 ? Math.round((m.hours / totalHours) * 100) : 0;
+    return `<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12.5px;">
+      <span style="width:10px;height:10px;border-radius:50%;background:${CP_REPORT_PALETTE[i % CP_REPORT_PALETTE.length]};flex-shrink:0;"></span>
+      <span style="color:#1e293b;">${esc(m.name)} — <b>${fmtHM(m.hours)}</b> (${pct}%)</span>
+    </div>`;
+  }).join('');
+}
+
+function buildReportLogTableHTML(members) {
+  const rows = [];
+  members.forEach(m => m.notes.forEach(n => rows.push({ ...n, name: m.name })));
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+
+  if (!rows.length) return `<div style="font-size:12px;color:#64748b;">No notes recorded for this period.</div>`;
+
+  return `
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;">
+      <thead>
+        <tr style="background:#eef2ff;">
+          <th style="text-align:left;padding:7px 9px;border:1px solid #dbeafe;color:#334155;">Date</th>
+          <th style="text-align:left;padding:7px 9px;border:1px solid #dbeafe;color:#334155;">Employee</th>
+          <th style="text-align:right;padding:7px 9px;border:1px solid #dbeafe;color:#334155;">Hours</th>
+          <th style="text-align:left;padding:7px 9px;border:1px solid #dbeafe;color:#334155;">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td style="padding:6px 9px;border:1px solid #e2e8f0;white-space:nowrap;">${esc(fmtCPDateShort(r.date))}</td>
+            <td style="padding:6px 9px;border:1px solid #e2e8f0;white-space:nowrap;">${esc(r.name)}</td>
+            <td style="padding:6px 9px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;">${fmtHM(r.hours)}</td>
+            <td style="padding:6px 9px;border:1px solid #e2e8f0;">${esc(r.note)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// Joins a list of strings into natural English: "A", "A and B", or
+// "A, B, and C" — used to fold everyone's contribution into one
+// readable sentence instead of a chart.
+function joinNaturalList(items) {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
+// Builds a ~150-200 word narrative paragraph directly from the real
+// notes people wrote, grouped by employee. This is an EXTRACTIVE
+// combination of actual note text — not AI-generated analysis. True
+// language-model summarization would need a call to an external AI
+// API, which isn't part of this app's architecture (no key, no
+// backend support for it, and it would be a real external dependency
+// the rest of this app has deliberately avoided). This instead
+// stitches together what was actually written, so nothing in the
+// report is invented or paraphrased beyond what the team recorded.
+function buildWorkNarrativeText(contrib) {
+  const byEmp = contrib.members
+    .map(m => ({ name: m.name, notes: [...new Set(m.notes.map(n => n.note.trim()).filter(Boolean))] }))
+    .filter(m => m.notes.length > 0);
+
+  if (!byEmp.length) return '';
+
+  const countWords = s => s.split(/\s+/).filter(Boolean).length;
+  const render = cap => byEmp.map(m => {
+    const notes = cap ? m.notes.slice(0, cap) : m.notes;
+    return `${m.name} worked on ${joinNaturalList(notes)}.`;
+  }).join(' ');
+
+  // Start with everyone's full notes, then progressively cap how
+  // many distinct notes each person contributes until the paragraph
+  // fits the target range — keeps this close to 150-200 words
+  // regardless of how many people/notes are in the period.
+  let text = render(null);
+  for (let cap = 3; cap >= 1 && countWords(text) > 200; cap--) {
+    text = render(cap);
+  }
+
+  // Hard safety net: if it's still long even at one note per person
+  // (e.g. many contributors with long notes), cut cleanly at ~200
+  // words rather than letting it run on indefinitely.
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 210) text = words.slice(0, 200).join(' ') + '…';
+
+  return text;
+}
+
+function buildReportSummaryText(project, contrib) {
+  if (!contrib.members.length) {
+    return `No activity was logged against ${project.projectName || project.projectId} during this period.`;
+  }
+
+  const total = contrib.totalHours || 1;
+  const shares = contrib.members.map(m => `${m.name} (${fmtHM(m.hours)}, ${Math.round((m.hours / total) * 100)}%)`);
+
+  const breakdown = contrib.members.length === 1
+    ? `${shares[0]} was the sole contributor.`
+    : `Contribution breakdown, from highest to lowest: ${joinNaturalList(shares)}.`;
+
+  return `This report covers ${contrib.members.length} team member${contrib.members.length !== 1 ? 's' : ''} who together logged ${fmtHM(contrib.totalHours)} across ${contrib.totalDays} day${contrib.totalDays !== 1 ? 's' : ''}. ${breakdown}`;
+}
+
+function buildProjectReportHTML(project, mode) {
+  const client = CP_CLIENTS.find(c => c.id === project.clientId);
+  const today  = todayStr();
+
+  let fromDate, toDate, periodLabel, reportTypeLabel;
+  if (mode === 'month') {
+    const m = today.slice(0, 7);
+    fromDate = m + '-01';
+    toDate   = today;
+    periodLabel = fmtCPMonthLabel(m);
+    reportTypeLabel = 'Monthly Report';
+  } else {
+    const entries  = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave' && e.date);
+    let earliest   = entries.reduce((min, e) => (!min || e.date < min) ? e.date : min, null);
+    if (project.startDate && (!earliest || project.startDate < earliest)) earliest = project.startDate;
+    fromDate = earliest || today;
+    toDate   = today;
+    periodLabel = `${fmtCPDateShort(fromDate)} – ${fmtCPDateShort(toDate)}`;
+    reportTypeLabel = 'Overall Report';
+  }
+
+  const contrib   = getProjectContribution(project, fromDate, toDate);
+  const genStamp  = new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const workNarrative = buildWorkNarrativeText(contrib);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>${esc(project.projectName || project.projectId)} — ${esc(reportTypeLabel)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin:0; padding:28px; background:#eef2ff; color:#1e293b; }
+  .sheet { max-width:820px; margin:0 auto; background:#fff; border-radius:16px; padding:36px 42px 44px; box-shadow:0 4px 24px rgba(0,0,0,.06); }
+  h1 { font-size:25px; color:#2563eb; margin:0 0 4px; font-weight:800; }
+  .sub { font-size:12px; color:#64748b; margin-bottom:20px; }
+  .infobar { display:flex; gap:28px; flex-wrap:wrap; padding:14px 0; border-top:1px solid #e2e8f0; border-bottom:1px solid #e2e8f0; margin-bottom:26px; }
+  .infobar div { font-size:12.5px; }
+  .infobar b { display:block; color:#2563eb; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px; font-weight:700; }
+  h2 { font-size:14px; color:#2563eb; margin:26px 0 12px; font-weight:800; }
+  .row { display:flex; gap:36px; align-items:center; flex-wrap:wrap; }
+  .footer { margin-top:30px; font-size:10.5px; color:#94a3b8; text-align:right; }
+  @media print {
+    body { background:#fff; padding:0; }
+    .sheet { box-shadow:none; border-radius:0; max-width:100%; padding:0; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <h1>${esc(project.projectName || project.projectId)}</h1>
+    <div class="sub">${esc(reportTypeLabel)} · ${esc(project.projectId)} · ${esc(client ? client.name : (project.clientId || '—'))}</div>
+
+    <div class="infobar">
+      <div><b>Report Type</b>${esc(reportTypeLabel)}</div>
+      <div><b>Period</b>${esc(periodLabel)}</div>
+      <div><b>Start Date</b>${esc(fmtCPDateShort(project.startDate))}</div>
+      <div><b>End Date</b>${esc(fmtCPDateShort(project.endDate))}</div>
+      <div><b>Status</b>${esc(project.status)}</div>
+    </div>
+
+    <h2>Contribution by Team Member</h2>
+    <div class="row">
+      <div>${buildReportPieSVG(contrib.members, contrib.totalHours)}</div>
+      <div>${buildReportLegendHTML(contrib.members, contrib.totalHours)}</div>
+    </div>
+
+    <h2>Detailed Log</h2>
+    ${buildReportLogTableHTML(contrib.members)}
+
+    <h2>Summary</h2>
+    <div style="font-size:12.5px;color:#334155;line-height:1.6;">
+      <p style="margin:0 0 10px;">${esc(buildReportSummaryText(project, contrib))}</p>
+      ${workNarrative ? `<p style="margin:0;">${esc(workNarrative)}</p>` : ''}
+    </div>
+
+    <div class="footer">Generated ${esc(genStamp)}</div>
+  </div>
+</body>
+</html>`;
+}
+
+// Opens the report in a new tab and triggers the browser's own Print
+// dialog — "Save as PDF" is a built-in destination on every major
+// browser, so this is a real "Download PDF" without needing a PDF
+// library. The short delay before print() gives the new tab time to
+// actually render the content first.
+function openProjectReport(project, mode) {
+  const win = window.open('', '_blank');
+  if (!win) {
+    toast?.('e', 'Popup blocked', 'Please allow popups for this site, then try again.');
+    return;
+  }
+  win.document.open();
+  win.document.write(buildProjectReportHTML(project, mode));
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 400);
+}
 
 function renderProjectTeamSection(project) {
   const el = $('cpTeamSection');
   if (!el) return;
 
-  // Candle shows regardless of whether there's any data — it's now
-  // visible even at zero hours (a bordered track with a muted
-  // placeholder fill), so a brand-new project still shows something
-  // rather than the whole section just disappearing.
-  const allTimeTotals = getProjectEmployeeTotals(project);
-  const allTimeHours  = allTimeTotals.reduce((s, t) => s + t.hours, 0);
-  const candleHtml    = buildCandle(project, allTimeTotals, allTimeHours || 0.01, allTimeHours || 0.01, false, null);
+  const { byDate, dates } = getProjectDailyActivity(project);
+  CP_TEAM_DAILY_BYDATE = byDate;
+  CP_TEAM_DAILY_DATES  = dates;
+  CP_TEAM_PAGE = 0;
 
-  const activity = getProjectTeamActivity(project);
-  if (!activity || !activity.months.length) {
+  if (!dates.length) {
     el.innerHTML = `
       <div class="cp-card">
-        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:1rem;">👥 Team &amp; Hours</div>
-        <div style="display:flex;justify-content:center;margin-bottom:1rem;">
-          ${candleHtml}
-        </div>
-        <div style="font-size:12.5px;color:var(--txt2);text-align:center;">No timesheet hours logged against this project yet.</div>
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">👥 Team Performance</div>
+        <div style="font-size:12.5px;color:var(--txt2);">No timesheet hours logged against this project yet.</div>
       </div>`;
     return;
   }
 
-  CP_TEAM_MONTHS = activity.months;
-  CP_TEAM_IDX    = CP_TEAM_MONTHS.length - 1; // default to the most recent month
+  const totalMembers = new Set(dates.flatMap(d => Object.keys(byDate[d]))).size;
+  const totalHours   = dates.reduce((s, d) => s + Object.values(byDate[d]).reduce((s2, m) => s2 + m.hours, 0), 0);
 
   el.innerHTML = `
     <div class="cp-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:6px;">
-        <div style="font-weight:700;font-size:14px;color:var(--txt1);">👥 Team &amp; Hours</div>
-        <div style="font-size:11.5px;color:var(--txt2);">${activity.totalMembers} member${activity.totalMembers !== 1 ? 's' : ''} · ${activity.totalHours.toFixed(1)}h total, all time</div>
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);">👥 Team Performance</div>
+        <div style="font-size:11.5px;color:var(--txt2);">${totalMembers} member${totalMembers !== 1 ? 's' : ''} · ${totalHours.toFixed(1)}h total, all time</div>
       </div>
-
-      <div style="display:flex;justify-content:center;margin-bottom:1.1rem;">
-        ${candleHtml}
-      </div>
-
-      <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:1rem;">
-        <button id="cpTeamPrev" class="cp-nav-btn">◀</button>
-        <span id="cpTeamMonthLabel" style="font-size:13px;font-weight:700;color:var(--txt1);min-width:150px;text-align:center;"></span>
-        <button id="cpTeamNext" class="cp-nav-btn">▶</button>
-      </div>
-
-      <div id="cpTeamMonthBody"></div>
+      <div id="cpTeamDailyList"></div>
+      <div id="cpTeamPager" style="margin-top:1rem;"></div>
     </div>`;
 
-  $('cpTeamPrev').addEventListener('click', () => { if (CP_TEAM_IDX > 0) { CP_TEAM_IDX--; renderCPTeamMonth(); } });
-  $('cpTeamNext').addEventListener('click', () => { if (CP_TEAM_IDX < CP_TEAM_MONTHS.length - 1) { CP_TEAM_IDX++; renderCPTeamMonth(); } });
-  renderCPTeamMonth();
+  renderCPTeamDailyPage();
 }
 
-function renderCPTeamMonth() {
-  const m = CP_TEAM_MONTHS[CP_TEAM_IDX];
-  if (!m) return;
+function renderCPTeamDailyPage() {
+  const listEl  = $('cpTeamDailyList');
+  const pagerEl = $('cpTeamPager');
+  if (!listEl) return;
 
-  const label = $('cpTeamMonthLabel');
-  if (label) label.textContent = fmtCPMonthLabel(m.month);
-  $('cpTeamPrev').disabled = CP_TEAM_IDX === 0;
-  $('cpTeamNext').disabled = CP_TEAM_IDX === CP_TEAM_MONTHS.length - 1;
+  const start     = CP_TEAM_PAGE * CP_TEAM_PAGE_SIZE;
+  const pageDates = CP_TEAM_DAILY_DATES.slice(start, start + CP_TEAM_PAGE_SIZE);
 
-  const body = $('cpTeamMonthBody');
-  if (!body) return;
+  listEl.innerHTML = pageDates.map((date, i) =>
+    buildTeamDailyRow(date, CP_TEAM_DAILY_BYDATE[date], i === pageDates.length - 1)
+  ).join('');
 
-  const maxHours = Math.max(...m.members.map(x => x.hours), 0.01);
+  const totalPages = Math.max(1, Math.ceil(CP_TEAM_DAILY_DATES.length / CP_TEAM_PAGE_SIZE));
+  if (!pagerEl) return;
 
-  body.innerHTML = `
-    <div style="font-size:11px;color:var(--txt2);margin-bottom:10px;text-align:center;">
-      ${m.members.length} member${m.members.length !== 1 ? 's' : ''} · ${m.monthHours.toFixed(1)}h this month
-    </div>
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      ${m.members.map(mem => `
-        <div>
-          <div style="display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;">
-            <span style="color:var(--txt1);font-weight:600;">${esc(mem.name)}</span>
-            <span style="color:var(--txt2);font-weight:600;">${mem.hours.toFixed(1)}h</span>
-          </div>
-          <div class="cp-bar-track">
-            <div class="cp-bar-fill" style="width:${(mem.hours / maxHours) * 100}%;"></div>
-          </div>
-        </div>`).join('')}
+  if (totalPages <= 1) { pagerEl.innerHTML = ''; return; }
+
+  const pageNums = [];
+  for (let p = 0; p < totalPages; p++) pageNums.push(p);
+
+  pagerEl.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;">
+      <button class="cp-pager-btn" id="cpTeamPagePrev" ${CP_TEAM_PAGE === 0 ? 'disabled' : ''}>‹ Prev</button>
+      ${pageNums.map(p => `<button class="cp-pager-btn cp-pager-num${p === CP_TEAM_PAGE ? ' active' : ''}" data-page="${p}">${p + 1}</button>`).join('')}
+      <button class="cp-pager-btn" id="cpTeamPageNext" ${CP_TEAM_PAGE === totalPages - 1 ? 'disabled' : ''}>Next ›</button>
+    </div>`;
+
+  $('cpTeamPagePrev')?.addEventListener('click', () => { if (CP_TEAM_PAGE > 0) { CP_TEAM_PAGE--; renderCPTeamDailyPage(); } });
+  $('cpTeamPageNext')?.addEventListener('click', () => { if (CP_TEAM_PAGE < totalPages - 1) { CP_TEAM_PAGE++; renderCPTeamDailyPage(); } });
+  pagerEl.querySelectorAll('.cp-pager-num').forEach(btn => {
+    btn.addEventListener('click', () => { CP_TEAM_PAGE = parseInt(btn.dataset.page, 10); renderCPTeamDailyPage(); });
+  });
+}
+
+// One day's row: date header + member count/total, a segmented bar
+// (one colored slice per employee, sized by their share of that
+// day's hours), then each employee's own hours and notes for that
+// specific day listed underneath.
+function buildTeamDailyRow(date, dayData, isLast) {
+  const members = Object.entries(dayData)
+    .map(([empId, d]) => {
+      const emp = CP_EMPLOYEES.find(x => x.id === empId);
+      return { empId, name: emp ? emp.name : empId, hours: d.hours, notes: d.notes.join(' · ') };
+    })
+    .sort((a, b) => b.hours - a.hours);
+
+  const dayTotal = members.reduce((s, m) => s + m.hours, 0);
+  const safeTotal = dayTotal || 0.01;
+
+  const segments = members.map(m => {
+    const pct = Math.max((m.hours / safeTotal) * 100, 3);
+    return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(m.empId)};"
+      title="${esc(m.name)}: ${fmtHM(m.hours)}"></div>`;
+  }).join('');
+
+  const memberRows = members.map(m => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
+      <span style="width:8px;height:8px;border-radius:50%;background:${getEmployeeColor(m.empId)};flex-shrink:0;margin-top:4px;"></span>
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span style="font-size:12px;font-weight:700;color:var(--txt1);">${esc(m.name)}</span>
+          <span style="font-size:12px;font-weight:700;color:var(--a1);white-space:nowrap;">${fmtHM(m.hours)}</span>
+        </div>
+        <div style="font-size:11px;color:var(--txt2);margin-top:2px;">${esc(m.notes || 'No notes')}</div>
+      </div>
+    </div>`).join('');
+
+  const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+  return `
+    <div style="margin-bottom:${isLast ? '0' : '1.1rem'};padding-bottom:${isLast ? '0' : '1.1rem'};${isLast ? '' : 'border-bottom:1px solid var(--border-md);'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+        <span style="font-size:13px;font-weight:700;color:var(--txt1);">${esc(dateLabel)}</span>
+        <span style="font-size:11.5px;color:var(--txt2);">${members.length} member${members.length !== 1 ? 's' : ''} · ${fmtHM(dayTotal)}</span>
+      </div>
+      <div style="display:flex;border-radius:6px;overflow:hidden;height:14px;margin-bottom:4px;">${segments}</div>
+      <div>${memberRows}</div>
     </div>`;
 }
 
@@ -1597,6 +1955,13 @@ function getMonthlyPointsForEmployee(empId, month) {
 
 function fmtCPMonthLabel(monthKey) {
   return new Date(monthKey + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+function fmtCPDateShort(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 function fmtCPRupees(n) {

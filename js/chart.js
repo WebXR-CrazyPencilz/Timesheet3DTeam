@@ -247,11 +247,19 @@ function buildDayRow(dateStr, label, dayEntries) {
     </div>`;
 }
 
+// Timezone-safe 'YYYY-MM-DD' — same fix applied to manager.js/
+// teamleader.js. toISOString() converts to UTC first, which silently
+// rolls a locally-midnight-constructed date back a day in any UTC+
+// timezone (like IST).
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
 function buildLast5DaysRows() {
   const days = [];
   for (let i = 1; i <= 5; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
+    days.push(toLocalDateStr(d));
   }
   return days.map(dateStr => {
     const dayEntries = (ENTRIES || []).filter(e => e.date === dateStr && e.status !== 'Leave');

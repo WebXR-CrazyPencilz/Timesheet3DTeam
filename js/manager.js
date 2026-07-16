@@ -159,7 +159,7 @@ function renderMgrTab() {
 // ══════════════════════════════════════════════════
 function renderEmployeesTab(content) {
   const filtered = getMgrFiltered();
-  const worked   = filtered.filter(e => e.status !== 'Leave');
+  const worked   = filtered.filter(isWorkedEntry);
   const totHours = calcHours(worked);
 
   content.innerHTML = `
@@ -215,7 +215,7 @@ function renderEmpContent() {
   const content = $('mgrEmpContent');
   if (!content) return;
   const filtered = getMgrFiltered();
-  const worked   = filtered.filter(e => e.status !== 'Leave');
+  const worked   = filtered.filter(isWorkedEntry);
 
   const mTot = $('mTot'); if (mTot) mTot.textContent = fh(calcHours(worked));
   const mEmpCnt  = $('mEmpCnt');  if (mEmpCnt)  mEmpCnt.textContent  = new Set(filtered.map(e=>e.empId)).size;
@@ -264,7 +264,7 @@ function renderEmpCards(content, worked, all) {
   const last5Dates = [];
   for (let i = 1; i <= 5; i++) {
     const d = new Date(); d.setDate(d.getDate() - i);
-    last5Dates.push(d.toISOString().slice(0, 10));
+    last5Dates.push(toLocalDateStr(d));
   }
 
   const monthWorkingDaysSoFar = (() => {
@@ -274,14 +274,14 @@ function renderEmpCards(content, worked, all) {
       const dt = new Date(y, m - 1, d);
       const dow = dt.getDay();
       if (dow === 0 || dow === 6) continue;
-      days.push(dt.toISOString().slice(0, 10));
+      days.push(toLocalDateStr(dt));
     }
     return days;
   })();
 
   Object.values(empMap).forEach(emp => {
     const me = MGR_DATA.filter(e => e.empId === emp.id && e.date && e.date.startsWith(curMonth));
-    const mw = me.filter(e => e.status !== 'Leave');
+    const mw = me.filter(isWorkedEntry);
     emp.monthHours  = mw.reduce((s,e) => s + parseH(e.hours), 0);
     emp.monthDays   = new Set(mw.map(e => e.date)).size;
     emp.monthLeaves = me.filter(e => e.status === 'Leave').length;
@@ -295,7 +295,7 @@ function renderEmpCards(content, worked, all) {
 
     const todayEntries = MGR_DATA.filter(e => e.empId === emp.id && e.date === tod);
     const todayLeave    = todayEntries.some(e => e.status === 'Leave');
-    const todayWorked   = todayEntries.filter(e => e.status !== 'Leave');
+    const todayWorked   = todayEntries.filter(isWorkedEntry);
     emp.todayHours = todayWorked.reduce((s,e) => s + parseH(e.hours), 0);
 
     if (todayLeave)                              emp.todayStatus = 'Leave';
@@ -501,7 +501,7 @@ function buildMonthPicker() {
   const now = new Date();
   for (let i=0;i<12;i++){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    months.push({val:d.toISOString().slice(0,7),label:d.toLocaleDateString('en-IN',{month:'short',year:'numeric'})});
+    months.push({val:toLocalDateStr(d).slice(0,7),label:d.toLocaleDateString('en-IN',{month:'short',year:'numeric'})});
   }
   picker.innerHTML = `
     <div style="display:flex;gap:6px;overflow-x:auto;flex:1;padding-bottom:2px;">
@@ -564,22 +564,42 @@ function getWorkingDaysInRange() {
     start=MGR_SELECTED_MONTH+'-01';
     end=MGR_SELECTED_MONTH+'-'+String(new Date(y,m,0).getDate()).padStart(2,'0');
     if (end>tod) end=tod;
-  } else { const d=new Date(); d.setDate(d.getDate()-90); start=d.toISOString().slice(0,10); end=tod; }
+  } else { const d=new Date(); d.setDate(d.getDate()-90); start=toLocalDateStr(d); end=tod; }
   const dates=[]; const cur=new Date(start+'T00:00:00'); const endDate=new Date(end+'T00:00:00');
-  while(cur<=endDate){ const day=cur.getDay(); if(day!==0&&day!==6) dates.push(cur.toISOString().slice(0,10)); cur.setDate(cur.getDate()+1); }
+  while(cur<=endDate){ const day=cur.getDay(); if(day!==0&&day!==6) dates.push(toLocalDateStr(cur)); cur.setDate(cur.getDate()+1); }
   return dates;
 }
 
 function getLast15Days() {
   const dates=[];
-  for(let i=0;i<15;i++){ const d=new Date(); d.setDate(d.getDate()-i); dates.push(d.toISOString().slice(0,10)); }
+  for(let i=0;i<15;i++){ const d=new Date(); d.setDate(d.getDate()-i); dates.push(toLocalDateStr(d)); }
   return dates;
 }
 
 // Force Leave is handled in emp-detail.js
 
 // ── GENERAL HELPERS ───────────────────────────────
-function calcHours(arr) { return arr.filter(e=>e.status!=='Leave').reduce((s,e)=>s+parseH(e.hours),0); }
+// Timezone-safe 'YYYY-MM-DD' from a Date's LOCAL components. Every
+// .toISOString().slice(0,N) call in this file was silently wrong in
+// any UTC+ timezone (like IST): toISOString() always converts to
+// UTC first, and a date built as local midnight (e.g. the 1st of a
+// month) rolls back to the previous day/month once converted —
+// exactly the "month picker shows Jul but loads Jun" bug. This uses
+// the Date's own local getFullYear/getMonth/getDate instead, same
+// safe approach utils.js's todayStr() already uses elsewhere.
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// An entry counts as "worked" only if it's neither a Leave nor a
+// Holiday — both are non-working statuses. Every filter in this file
+// that used to check `status !== 'Leave'` alone was letting Holiday
+// entries slip through as if they were worked days (with 0 hours,
+// but still counted toward "Days" totals) — Holiday needs the same
+// exclusion Leave already gets, everywhere "worked" is computed.
+function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday'; }
+
+function calcHours(arr) { return arr.filter(isWorkedEntry).reduce((s,e)=>s+parseH(e.hours),0); }
 
 // Check-in / check-out / worked-duration for one employee on one
 // specific date. Earliest logged Time In and latest logged Time Out
@@ -588,7 +608,7 @@ function calcHours(arr) { return arr.filter(e=>e.status!=='Leave').reduce((s,e)=
 // the default past-5-days list and the date picker's custom lookup —
 // same logic either way.
 function getEmpDayAttendance(empId, date) {
-  const entries = MGR_DATA.filter(e => e.empId === empId && e.date === date && e.status !== 'Leave');
+  const entries = MGR_DATA.filter(e => e.empId === empId && e.date === date).filter(isWorkedEntry);
   if (!entries.length) return { hasEntry: false, checkIn: null, checkOut: null, hours: 0 };
   const timesIn  = entries.map(e => e.timeIn).filter(Boolean).sort();
   const timesOut = entries.map(e => e.timeOut).filter(Boolean).sort();
