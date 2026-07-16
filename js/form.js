@@ -52,8 +52,7 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 8;
-
+const MAX_DAYS_BACK = 16;
 function renderDateNav() {
   const nav = $('dateNav');
   if (!nav) return;
