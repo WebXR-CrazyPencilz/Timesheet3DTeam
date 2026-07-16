@@ -639,6 +639,14 @@ tr:hover .del-btn{opacity:1}
     </div>
   </header>
   <main class="main">
+    <div class="emp-tabs" id="empTabs" style="display:flex;gap:4px;margin-bottom:1.25rem;border-bottom:1px solid var(--border);padding-bottom:0;">
+      <button class="emp-tab-btn active" data-emp-tab="timesheet" style="padding:9px 16px;border:none;background:none;cursor:pointer;
+        font-size:13px;font-weight:600;color:var(--a1);border-bottom:2px solid var(--a1);margin-bottom:-1px;transition:all .2s;">🕐 Timesheet</button>
+      <button class="emp-tab-btn" data-emp-tab="projects" style="padding:9px 16px;border:none;background:none;cursor:pointer;
+        font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .2s;">📁 My Projects</button>
+    </div>
+
+    <div id="empTabTimesheet">
     <div class="phdr">
       <div>
         <h1 class="ptitle">Log Your Time</h1>
@@ -716,6 +724,19 @@ tr:hover .del-btn{opacity:1}
         </table>
       </div>
       <div class="pager" id="pager"></div>
+    </div>
+    </div>
+
+    <div id="empTabProjects" style="display:none;">
+      <div class="phdr">
+        <div>
+          <h1 class="ptitle">My Projects</h1>
+          <p class="psub">Every project you've worked on, with basic details.</p>
+        </div>
+      </div>
+      <div id="myProjCardsContainer">
+        <div class="slot-loading"><div class="slot-spinner"></div><span>Loading…</span></div>
+      </div>
     </div>
   </main>
 </div>
@@ -823,6 +844,7 @@ tr:hover .del-btn{opacity:1}
 <script src="js/auth.js"></script>
 <script src="js/form.js"></script>
 <script src="js/chart.js"></script>
+<script src="js/myprojects-tab.js"></script>
 <script src="js/table.js"></script>
 <script src="js/celebration.js"></script>
 <script src="js/manager.js"></script>
@@ -849,6 +871,7 @@ tr:hover .del-btn{opacity:1}
   initTable();
   initChart();
   initLogin();
+  initMyProjectsTab();
 </script>
 </body>
 </html>
