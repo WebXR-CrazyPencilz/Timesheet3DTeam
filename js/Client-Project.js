@@ -560,67 +560,77 @@ function buildClientCandleChart(client, projects, isManager, costMap) {
   const perProject = projects.map(p => {
     const totals = getProjectEmployeeTotals(p);
     const totalHours = totals.reduce((s, t) => s + t.hours, 0);
-    return { project: p, totals, totalHours };
+    const constant = parseFloat(p.projectConstant) || 0;
+    return { project: p, totals, totalHours, constant };
   });
-  const maxHours = Math.max(...perProject.map(x => x.totalHours), 0.01);
 
-  const candles = perProject.map(({ project: p, totals, totalHours }) => {
-    const cost = isManager ? (costMap ? costMap[p.projectId] : null) : null;
-    return buildCandle(p, totals, totalHours, maxHours, isManager, cost);
+  const maxHours    = Math.max(...perProject.map(x => x.totalHours), 0.01);
+  const maxConstant = Math.max(...perProject.map(x => x.constant), 0.01);
+
+  const rows = perProject.map(({ project: p, totals, totalHours, constant }, i) => {
+    const cost   = isManager ? (costMap ? costMap[p.projectId] : null) : null;
+    const isLast = i === perProject.length - 1;
+    return buildProjectPerfRow(p, totals, totalHours, maxHours, constant, maxConstant, isManager, cost, isLast);
   }).join('');
 
-  return `<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;align-items:flex-end;">${candles}</div>`;
+  return `<div>${rows}</div>`;
 }
 
-// One "candle" — a vertical stacked bar whose fill height (relative
-// to maxHours) represents total hours, segmented by employee color.
-// Shared by buildClientCandleChart (one candle per project, maxHours
-// = the client's busiest project) and the Project Detail page (a
-// single candle for just this project, maxHours = its own total, so
-// it always fills completely — see renderProjectCandleSection).
-function buildCandle(project, totals, totalHours, maxHours, showMoney, cost) {
-  // Minimum visibility: even at zero hours, the candle track gets a
-  // visible border (so it doesn't blend into the card background)
-  // and a small muted placeholder sliver instead of being fully
-  // empty — otherwise a 0-hour project just looked like nothing was
-  // there at all, rather than "a candle with nothing in it yet".
+// One project's performance, as two horizontal bars instead of a
+// vertical candle: Time (segmented by employee, length relative to
+// this client's busiest project) and Constant (length relative to
+// this client's highest Constant) — Manager only sees the Constant
+// bar and the Value/Profit line beneath it, same permission boundary
+// as before.
+function buildProjectPerfRow(project, totals, totalHours, maxHours, constant, maxConstant, showMoney, cost, isLast) {
   const hasHours = totalHours > 0;
-  const fillPct  = hasHours ? Math.max((totalHours / maxHours) * 100, 5) : 8;
-  const segments = hasHours
+  const timeFillPct = hasHours ? Math.max((totalHours / maxHours) * 100, 3) : 100;
+  const timeSegments = hasHours
     ? totals.map(t => {
         const segPct = (t.hours / totalHours) * 100;
-        return `<div style="width:100%;height:${segPct}%;background:${getEmployeeColor(t.empId)};"
+        return `<div style="width:${segPct}%;height:100%;background:${getEmployeeColor(t.empId)};"
           title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
       }).join('')
     : `<div style="width:100%;height:100%;background:var(--border-md);" title="No hours logged yet"></div>`;
 
   let moneyHtml = '';
   if (showMoney) {
-    const constant = parseFloat(project.projectConstant) || 0;
-    const value    = parseFloat(project.projectValue) || 0;
+    const hasConstant  = constant > 0;
+    const constFillPct = hasConstant ? Math.max((constant / maxConstant) * 100, 3) : 100;
+    const value = parseFloat(project.projectValue) || 0;
 
     const perfHtml = cost
       ? (() => {
           const isProfit = cost.profit >= 0;
-          return `<div style="font-size:9.5px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(cost.profit))}</div>`;
+          return `<span style="font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(cost.profit))}</span>`;
         })()
-      : `<div style="font-size:9px;color:var(--txt2);">Calculating…</div>`;
+      : `<span style="color:var(--txt2);">Calculating…</span>`;
 
     moneyHtml = `
-      <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">C: ${fmtCPRupees(constant)}</div>
-      <div style="font-size:9px;color:var(--txt2);white-space:nowrap;">V: ${fmtCPRupees(value)}</div>
-      ${perfHtml}`;
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+        <span style="flex:0 0 62px;font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Constant</span>
+        <div style="flex:1;height:10px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;overflow:hidden;">
+          <div style="width:${constFillPct}%;height:100%;background:${hasConstant ? '#f59e0b' : 'var(--border-md)'};"></div>
+        </div>
+        <span style="flex:0 0 74px;text-align:right;font-size:10px;color:var(--txt1);font-weight:700;white-space:nowrap;">${fmtCPRupees(constant)}</span>
+      </div>
+      <div style="font-size:9.5px;color:var(--txt2);margin-top:4px;padding-left:72px;">
+        Value: ${fmtCPRupees(value)} · ${perfHtml}
+      </div>`;
   }
 
   return `
-    <div style="flex:0 0 68px;display:flex;flex-direction:column;align-items:center;gap:5px;">
-      <div style="width:26px;height:88px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;
-        display:flex;flex-direction:column-reverse;" title="${esc(project.projectName || project.projectId)}: ${fmtHM(totalHours)}">
-        <div style="width:100%;height:${fillPct}%;display:flex;flex-direction:column-reverse;">${segments}</div>
+    <div style="${isLast ? '' : 'margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);'}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+        <span style="font-size:11.5px;font-weight:700;color:var(--txt1);" title="${esc(project.projectName || project.projectId)}">${esc(project.projectId)}</span>
       </div>
-      <div style="font-size:9.5px;color:var(--txt1);font-weight:600;text-align:center;max-width:68px;
-        overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(project.projectName || project.projectId)}">${esc(project.projectId)}</div>
-      <div style="font-size:9px;color:var(--txt2);">${fmtHM(totalHours)}</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="flex:0 0 62px;font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Time</span>
+        <div style="flex:1;height:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <div style="width:${timeFillPct}%;height:100%;display:flex;">${timeSegments}</div>
+        </div>
+        <span style="flex:0 0 74px;text-align:right;font-size:10px;color:var(--txt1);font-weight:700;white-space:nowrap;">${fmtHM(totalHours)}</span>
+      </div>
       ${moneyHtml}
     </div>`;
 }
@@ -1050,11 +1060,13 @@ async function openProjectDetail(content, projectId, opts = {}) {
     ? `<div style="max-width:620px;margin:0 auto;">${formCard}</div>`
     : `
       <div style="max-width:1400px;margin:0 auto;display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
-        <div>${formCard}</div>
+        <div>
+          ${formCard}
+          ${isManager ? `<div id="cpCostSection" style="margin-top:1.25rem;"></div>` : ''}
+        </div>
         <div style="display:flex;flex-direction:column;gap:1.25rem;">
           <div id="cpTimelineSection"></div>
           <div id="cpTeamSection"></div>
-          ${isManager ? `<div id="cpCostSection"></div>` : ''}
         </div>
       </div>`;
 

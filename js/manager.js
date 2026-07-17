@@ -284,7 +284,12 @@ function renderEmpCards(content, worked, all) {
     const mw = me.filter(isWorkedEntry);
     emp.monthHours  = mw.reduce((s,e) => s + parseH(e.hours), 0);
     emp.monthDays   = new Set(mw.map(e => e.date)).size;
-    emp.monthLeaves = me.filter(e => e.status === 'Leave').length;
+    // Unique DATES with a Leave entry, not raw entry count — the
+    // partial-permission Leave feature lets one day have two Leave
+    // entries (e.g. a morning window + an afternoon window), which
+    // was inflating this to 2x the real number of leave days. Matches
+    // Code.gs's getEmployeeDetail, which already counts unique dates.
+    emp.monthLeaves = new Set(me.filter(e => e.status === 'Leave').map(e => e.date)).size;
 
     mw.forEach(e => {
       if (e.project) emp.monthProjectMap[e.project] = (emp.monthProjectMap[e.project]||0) + parseH(e.hours);
@@ -330,7 +335,7 @@ function renderEmpCards(content, worked, all) {
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1.25rem;margin-top:.5rem;">
+    <div style="margin-top:.5rem;">
       ${rows.map(emp => buildEmpCard(emp)).join('')}
     </div>`;
 
@@ -407,33 +412,56 @@ function buildEmpCard(emp) {
 
   return `
     <div class="emp-card" style="background:var(--surface1);
-      border:1px solid var(--border);border-radius:14px;padding:1.1rem;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:.9rem;">
-        <div style="width:38px;height:38px;border-radius:50%;
-          background:linear-gradient(135deg,var(--a1),#7c5cfc);
-          display:flex;align-items:center;justify-content:center;
-          font-weight:700;font-size:13px;color:#fff;flex-shrink:0;">${initials}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:14px;color:var(--txt1);
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(emp.name)}</div>
-          <div style="font-size:11px;color:var(--txt2);">${esc(emp.id)}</div>
+      border:1px solid var(--border);border-radius:14px;padding:1.1rem 1.3rem;margin-bottom:1.1rem;">
+
+      <!-- Identity + status + quick stats + View Details, all in one row -->
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:20px;">
+        <div style="display:flex;align-items:center;gap:10px;flex:0 0 auto;min-width:170px;">
+          <div style="width:38px;height:38px;border-radius:50%;
+            background:linear-gradient(135deg,var(--a1),#7c5cfc);
+            display:flex;align-items:center;justify-content:center;
+            font-weight:700;font-size:13px;color:#fff;flex-shrink:0;">${initials}</div>
+          <div style="min-width:0;">
+            <div style="font-weight:600;font-size:14px;color:var(--txt1);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(emp.name)}</div>
+            <div style="font-size:11px;color:var(--txt2);">${esc(emp.id)}</div>
+          </div>
         </div>
+
+        <span style="display:inline-flex;align-items:center;gap:5px;background:${st.bg};color:${st.fg};
+          border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;flex-shrink:0;">
+          <span style="width:6px;height:6px;border-radius:50%;background:${st.fg};"></span>${st.label}
+        </span>
+
+        <div style="display:flex;gap:22px;flex-wrap:wrap;flex:1;">
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Today</div>
+            <div style="font-size:14px;font-weight:800;color:var(--txt1);">${fh(emp.todayHours)}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">This Month</div>
+            <div style="font-size:14px;font-weight:800;color:var(--a1);">${fh(emp.monthHours)}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Leaves</div>
+            <div style="font-size:14px;font-weight:800;color:#fbbf24;">${emp.monthLeaves}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Not Logged</div>
+            <div style="font-size:14px;font-weight:800;color:${emp.monthNotLogged > 0 ? '#f87171' : 'var(--txt1)'};">${emp.monthNotLogged}</div>
+          </div>
+        </div>
+
         <button class="view-emp-btn" data-emp-id="${emp.id}" data-emp-name="${esc(emp.name)}"
           style="background:var(--a1);color:#fff;border:none;border-radius:6px;
-            padding:5px 12px;font-size:10px;font-weight:600;cursor:pointer;
+            padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;
             white-space:nowrap;flex-shrink:0;">
           View Details →
         </button>
       </div>
 
-      <div style="margin-bottom:.9rem;">
-        <span style="display:inline-flex;align-items:center;gap:5px;background:${st.bg};color:${st.fg};
-          border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700;">
-          <span style="width:6px;height:6px;border-radius:50%;background:${st.fg};"></span>${st.label}
-        </span>
-      </div>
-
-      <div class="att-widget" style="margin-bottom:.9rem;padding:8px 12px;background:var(--surface2);border-radius:10px;">
+      <!-- Attendance -->
+      <div class="att-widget" style="margin-top:1rem;padding:8px 12px;background:var(--surface2);border-radius:10px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:6px;">
           <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Attendance</div>
           <input type="date" class="att-date-picker" data-emp-id="${emp.id}" max="${todayStr()}"
@@ -445,26 +473,8 @@ function buildEmpCard(emp) {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.9rem;">
-        <div style="background:var(--surface2);border-radius:10px;padding:8px 12px;">
-          <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Today</div>
-          <div style="font-size:16px;font-weight:800;color:var(--txt1);">${fh(emp.todayHours)}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:10px;padding:8px 12px;">
-          <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">This Month</div>
-          <div style="font-size:16px;font-weight:800;color:var(--a1);">${fh(emp.monthHours)}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:10px;padding:8px 12px;">
-          <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Leaves</div>
-          <div style="font-size:16px;font-weight:800;color:#fbbf24;">${emp.monthLeaves}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:10px;padding:8px 12px;">
-          <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;">Not Logged</div>
-          <div style="font-size:16px;font-weight:800;color:${emp.monthNotLogged > 0 ? '#f87171' : 'var(--txt1)'};">${emp.monthNotLogged}</div>
-        </div>
-      </div>
-
-      <div>
+      <!-- Projects -->
+      <div style="margin-top:1rem;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
           <span style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Projects · ${esc(curMonthLabel)}</span>
           <span style="font-size:10px;color:var(--txt1);font-weight:700;background:var(--surface2);

@@ -87,16 +87,14 @@ function renderMyProjectCards(container, master, history) {
   const projectNames = Object.keys(byProjectName)
     .sort((a, b) => byProjectName[b].hours - byProjectName[a].hours);
 
-  const cardsHtml = projectNames.map(name => {
+  const blocksHtml = projectNames.map(name => {
     const stats = byProjectName[name];
     const proj  = (master || []).find(p => p.projectName === name);
     return buildMyProjectCard(name, proj, stats);
   }).join('');
 
-  container.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1.25rem;">
-      ${cardsHtml}
-    </div>`;
+  // Single column, full-width blocks — not a card grid.
+  container.innerHTML = `<div>${blocksHtml}</div>`;
 
   container.querySelectorAll('.myproj-view-btn').forEach(btn => {
     btn.addEventListener('click', () => openMyProjectDetail(btn.dataset.project));
@@ -113,49 +111,57 @@ function buildMyProjectCard(projectName, proj, stats) {
   const days      = stats.days.size;
   const hours     = fmtMyProjHours(stats.hours);
 
+  // One full-width horizontal block per project — everything on one
+  // row (identity, dates, days/hours, View Details), notes as a
+  // secondary row underneath. Replaces the earlier card grid.
   return `
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:14px;padding:1.2rem;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
-        <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--a1),#7c5cfc);
-          display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;flex-shrink:0;">${esc(initials)}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:700;font-size:14px;color:var(--txt1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(projectName)}">${esc(projectName)}</div>
-          <div style="font-size:11px;color:var(--txt2);">${esc(projectId)}</div>
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;
+      padding:1rem 1.2rem;margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:180px;flex:1 1 220px;">
+          <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--a1),#7c5cfc);
+            display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12.5px;color:#fff;flex-shrink:0;">${esc(initials)}</div>
+          <div style="min-width:0;">
+            <div style="font-weight:700;font-size:14px;color:var(--txt1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${esc(projectName)}">${esc(projectName)}</div>
+            <div style="font-size:11px;color:var(--txt2);">${esc(projectId)}</div>
+          </div>
         </div>
+
+        <div style="display:flex;gap:22px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Start</div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--txt1);white-space:nowrap;">${esc(startDate)}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">End</div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--txt1);white-space:nowrap;">${esc(endDate)}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Days</div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--txt1);">${days}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Hours</div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--a1);white-space:nowrap;">${esc(hours)}</div>
+          </div>
+        </div>
+
+        <button class="myproj-view-btn" data-project="${esc(projectName)}" style="background:var(--a1);color:#fff;border:none;
+          border-radius:8px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+          View Details →
+        </button>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.9rem;">
-        <div style="background:var(--surface2);border-radius:8px;padding:8px 10px;">
-          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Start Date</div>
-          <div style="font-size:12.5px;font-weight:700;color:var(--txt1);">${esc(startDate)}</div>
+      <div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:.85rem;padding-top:.75rem;border-top:1px solid var(--border);">
+        <div style="flex:1 1 200px;min-width:180px;">
+          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;">Manager Note</div>
+          <div style="font-size:11.5px;color:var(--txt1);">${esc(mgrNote)}</div>
         </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:8px 10px;">
-          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">End Date</div>
-          <div style="font-size:12.5px;font-weight:700;color:var(--txt1);">${esc(endDate)}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:8px 10px;">
-          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Days Worked</div>
-          <div style="font-size:12.5px;font-weight:700;color:var(--txt1);">${days}</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:8px 10px;">
-          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Hours Worked</div>
-          <div style="font-size:12.5px;font-weight:700;color:var(--a1);">${esc(hours)}</div>
+        <div style="flex:1 1 200px;min-width:180px;">
+          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;">Team Leader Note</div>
+          <div style="font-size:11.5px;color:var(--txt1);">${esc(tlNote)}</div>
         </div>
       </div>
-
-      <div style="margin-bottom:.6rem;">
-        <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Manager Note</div>
-        <div style="font-size:11.5px;color:var(--txt1);">${esc(mgrNote)}</div>
-      </div>
-      <div>
-        <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">Team Leader Note</div>
-        <div style="font-size:11.5px;color:var(--txt1);">${esc(tlNote)}</div>
-      </div>
-
-      <button class="myproj-view-btn" data-project="${esc(projectName)}" style="margin-top:1rem;width:100%;
-        background:var(--a1);color:#fff;border:none;border-radius:8px;padding:9px 14px;font-size:12.5px;font-weight:700;cursor:pointer;">
-        View Details →
-      </button>
     </div>`;
 }
 

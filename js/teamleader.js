@@ -28,7 +28,7 @@ let TL_EMPLOYEES   = [];
 let TL_CLIENTS     = [];
 let TL_PROJECTS    = [];
 
-let TL_TAB         = 'employees';  // project|client|employees — Employees is the default landing tab (Team Leader manages people first)
+let TL_TAB         = 'employees';  // project|client|employees|historical — Employees is the default landing tab (Team Leader manages people first)
 let TL_RANGE       = 'week';
 let TL_DAY_OFFSET  = 0;
 let TL_MONTH       = '';
@@ -92,9 +92,10 @@ function renderTLPortal() {
     <!-- Top nav tabs -->
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
-        { id:'project',   icon:'📁', label:'Project'   },
-        { id:'client',    icon:'🏢', label:'Client'    },
-        { id:'employees', icon:'👥', label:'Employees' },
+        { id:'project',    icon:'📁', label:'Project'    },
+        { id:'client',     icon:'🏢', label:'Client'     },
+        { id:'employees',  icon:'👥', label:'Employees'  },
+        { id:'historical', icon:'📜', label:'Historical Import' },
       ].map(t => `
         <button class="tl-tab${TL_TAB===t.id?' active':''}" data-tab="${t.id}" style="
           padding:8px 16px;border:none;background:none;cursor:pointer;
@@ -144,6 +145,12 @@ function renderTLTab() {
   }
 
   if (TL_TAB === 'employees') { renderTLEmployeesTab(content); return; }
+
+  if (TL_TAB === 'historical') {
+    if (typeof renderHistoricalImportTab === 'function') renderHistoricalImportTab(content);
+    else content.innerHTML = `<div class="chart-empty">Historical Import module (historical-import.js) is not loaded.</div>`;
+    return;
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -287,7 +294,7 @@ function renderTLEmpCards() {
   if (!rows.length) { content.innerHTML = `<div class="chart-empty">No employees found.</div>`; return; }
 
   content.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:1.25rem;margin-top:.5rem;">
+    <div style="margin-top:.5rem;">
       ${rows.map(emp => buildTLEmpCard(emp)).join('')}
     </div>`;
 
@@ -376,28 +383,6 @@ function buildTLEmpCard(emp) {
         </div>`).join('') +
       (projects.length>5?`<div style="font-size:10px;color:var(--txt2);">+${projects.length-5} more</div>`:'');
 
-  // Monthly strip
-  const monthStrip = `
-    <div style="margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:8px;
-      display:flex;align-items:center;border:1px solid var(--border);">
-      <span style="font-size:11px;color:var(--txt2);font-weight:600;margin-right:10px;white-space:nowrap;">📅 ${curMonth}</span>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;">
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span style="font-size:11px;color:var(--txt2);">Worked</span>
-          <span style="font-size:12px;font-weight:700;color:var(--a1);">${fh(emp.monthHours)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span style="font-size:11px;color:var(--txt2);">Days</span>
-          <span style="font-size:12px;font-weight:700;color:var(--txt1);">${emp.monthDays}</span>
-        </div>
-        ${emp.monthLeaves>0?`
-        <div style="display:flex;align-items:center;gap:4px;">
-          <span style="font-size:11px;color:var(--txt2);">Leaves</span>
-          <span style="font-size:12px;font-weight:700;color:#fbbf24;">${emp.monthLeaves}</span>
-        </div>`:''}
-      </div>
-    </div>`;
-
   // Missed days
   const missedSection = hasMissed ? `
     <div class="missed-section" style="margin-top:10px;border-top:1px solid rgba(239,68,68,0.25);padding-top:10px;">
@@ -473,30 +458,48 @@ function buildTLEmpCard(emp) {
 
   return `
     <div class="emp-card" style="background:var(--surface1);
-      border:1px solid ${hasMissed?'rgba(239,68,68,0.4)':'var(--border)'};border-radius:14px;padding:1.2rem;">
-      <!-- Header -->
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;">
-        <div style="width:36px;height:36px;border-radius:50%;
-          background:linear-gradient(135deg,var(--a1),#7c5cfc);
-          display:flex;align-items:center;justify-content:center;
-          font-weight:700;font-size:13px;color:#fff;flex-shrink:0;">${initials}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-weight:600;font-size:14px;color:var(--txt1);
-            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(emp.name)}</div>
-          <div style="font-size:11px;color:var(--txt2);">${esc(emp.team)}</div>
+      border:1px solid ${hasMissed?'rgba(239,68,68,0.4)':'var(--border)'};border-radius:14px;padding:1.1rem 1.3rem;margin-bottom:1.1rem;">
+
+      <!-- Identity + monthly quick stats + View Details, all in one row -->
+      <div style="display:flex;align-items:center;flex-wrap:wrap;gap:20px;">
+        <div style="display:flex;align-items:center;gap:10px;flex:0 0 auto;min-width:170px;">
+          <div style="width:36px;height:36px;border-radius:50%;
+            background:linear-gradient(135deg,var(--a1),#7c5cfc);
+            display:flex;align-items:center;justify-content:center;
+            font-weight:700;font-size:13px;color:#fff;flex-shrink:0;">${initials}</div>
+          <div style="min-width:0;">
+            <div style="font-weight:600;font-size:14px;color:var(--txt1);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(emp.name)}</div>
+            <div style="font-size:11px;color:var(--txt2);">${esc(emp.team)}</div>
+          </div>
         </div>
-        ${emp.monthLeaves>0?`<span style="background:rgba(251,191,36,0.15);color:#fbbf24;
-          border-radius:5px;padding:2px 8px;font-size:10px;font-weight:600;" title="Leaves this month">${emp.monthLeaves}L</span>`:''}
+
+        <div style="display:flex;gap:22px;flex-wrap:wrap;flex:1;align-items:center;">
+          <span style="font-size:10.5px;color:var(--txt2);font-weight:600;white-space:nowrap;">📅 ${curMonth}</span>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Worked</div>
+            <div style="font-size:14px;font-weight:800;color:var(--a1);">${fh(emp.monthHours)}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Days</div>
+            <div style="font-size:14px;font-weight:800;color:var(--txt1);">${emp.monthDays}</div>
+          </div>
+          <div>
+            <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Leaves</div>
+            <div style="font-size:14px;font-weight:800;color:#fbbf24;">${emp.monthLeaves}</div>
+          </div>
+        </div>
+
         <button class="view-emp-btn" data-emp-id="${emp.id}" data-emp-name="${esc(emp.name)}"
           style="background:var(--a1);color:#fff;border:none;border-radius:6px;
-            padding:5px 12px;font-size:10px;font-weight:600;cursor:pointer;
+            padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;
             white-space:nowrap;flex-shrink:0;">
           View Details →
         </button>
       </div>
 
       <!-- Attendance: past 5 days + date picker for any custom day -->
-      <div class="att-widget" style="margin-bottom:1rem;padding:8px 12px;background:var(--surface2);border-radius:10px;">
+      <div class="att-widget" style="margin-top:1rem;padding:8px 12px;background:var(--surface2);border-radius:10px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;flex-wrap:wrap;gap:6px;">
           <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Attendance</div>
           <input type="date" class="att-date-picker" data-emp-id="${emp.id}" max="${todayStr()}"
@@ -509,7 +512,7 @@ function buildTLEmpCard(emp) {
       </div>
 
       <!-- Donut LEFT + Legend RIGHT -->
-      <div style="display:flex;align-items:center;gap:1.2rem;">
+      <div style="display:flex;align-items:center;gap:1.2rem;margin-top:1rem;">
         <div style="position:relative;width:160px;height:160px;flex-shrink:0;">
           ${donutSvg}
           <div style="position:absolute;inset:0;display:flex;flex-direction:column;
@@ -521,7 +524,6 @@ function buildTLEmpCard(emp) {
         <div style="flex:1;min-width:0;">${legendHtml}</div>
       </div>
 
-      ${monthStrip}
       ${dayInfoHtml}
       ${missedSection}
     </div>`;
