@@ -1208,8 +1208,10 @@ async function openProjectDetail(content, projectId, opts = {}) {
           </div>` : ''}
       </div>
       ${!isNew ? `
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button id="cpReportMonth" class="cp-btn-ghost">📥 This Month</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input type="month" id="cpReportMonthPicker" class="cp-finput" style="padding:7px 10px;font-size:12px;width:150px;"
+            value="${esc(todayStr().slice(0, 7))}" title="Pick a month to download that month's report"/>
+          <button id="cpReportMonth" class="cp-btn-ghost">📥 Download Month</button>
           <button id="cpReportOverall" class="cp-btn-ghost">📥 Overall Report</button>
         </div>` : ''}
     </div>
@@ -1222,7 +1224,10 @@ async function openProjectDetail(content, projectId, opts = {}) {
   });
   $('cpSaveBtn').addEventListener('click', () => saveProjectFromForm(content, isNew, project, goBack));
   $('cpDeleteBtn')?.addEventListener('click', () => deleteProjectFromForm(content, project, goBack));
-  $('cpReportMonth')?.addEventListener('click', () => openProjectReport(project, 'month'));
+  $('cpReportMonth')?.addEventListener('click', () => {
+    const picked = $('cpReportMonthPicker')?.value || todayStr().slice(0, 7);
+    openProjectReport(project, 'month', picked);
+  });
   $('cpReportOverall')?.addEventListener('click', () => openProjectReport(project, 'overall'));
 
   if (!isNew) renderProjectTimelineSection(project);
@@ -1792,15 +1797,15 @@ function buildReportSummaryText(project, contrib) {
   return `This report covers ${contrib.members.length} team member${contrib.members.length !== 1 ? 's' : ''} who together logged ${fmtHM(contrib.totalHours)} across ${contrib.totalDays} day${contrib.totalDays !== 1 ? 's' : ''}. ${breakdown}`;
 }
 
-function buildProjectReportHTML(project, mode) {
+function buildProjectReportHTML(project, mode, targetMonth) {
   const client = CP_CLIENTS.find(c => c.id === project.clientId);
   const today  = todayStr();
 
   let fromDate, toDate, periodLabel, reportTypeLabel;
   if (mode === 'month') {
-    const m = today.slice(0, 7);
+    const m = targetMonth || today.slice(0, 7);
     fromDate = m + '-01';
-    toDate   = today;
+    toDate   = (m === today.slice(0, 7)) ? today : lastDayOfMonthStr_(m);
     periodLabel = fmtCPMonthLabel(m);
     reportTypeLabel = 'Monthly Report';
   } else {
@@ -1879,14 +1884,22 @@ function buildProjectReportHTML(project, mode) {
 // browser, so this is a real "Download PDF" without needing a PDF
 // library. The short delay before print() gives the new tab time to
 // actually render the content first.
-function openProjectReport(project, mode) {
+// 'YYYY-MM' -> 'YYYY-MM-DD' for that month's actual last day (day 0
+// of the following month = the last day of this one).
+function lastDayOfMonthStr_(m) {
+  const [y, mo] = m.split('-').map(Number);
+  const last = new Date(y, mo, 0).getDate();
+  return `${m}-${String(last).padStart(2, '0')}`;
+}
+
+function openProjectReport(project, mode, targetMonth) {
   const win = window.open('', '_blank');
   if (!win) {
     toast?.('e', 'Popup blocked', 'Please allow popups for this site, then try again.');
     return;
   }
   win.document.open();
-  win.document.write(buildProjectReportHTML(project, mode));
+  win.document.write(buildProjectReportHTML(project, mode, targetMonth));
   win.document.close();
   setTimeout(() => { win.focus(); win.print(); }, 400);
 }

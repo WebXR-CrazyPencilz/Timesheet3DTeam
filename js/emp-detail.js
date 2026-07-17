@@ -379,19 +379,32 @@ function buildActivityRow(day) {
 
   const isForceEntry = day.statusKey === 'force_entry';
   const rowClass = isForceEntry ? 'act-row act-row-clickable' : 'act-row';
+  // .act-row is display:flex (shared with the not-logged row above,
+  // which is a single flat horizontal row of pills+buttons). This
+  // row now has TWO stacked children (the content row + a notes
+  // line beneath it), so it needs flex-direction:column here
+  // specifically — done via inline style rather than touching the
+  // shared class, so the not-logged row's layout is untouched.
+  const rowStyle = [
+    'flex-direction:column;align-items:stretch;',
+    day.isToday ? 'background:rgba(79,142,247,.05);' : '',
+  ].join('');
   const rowAttrs = [
     isForceEntry ? `data-audit-date="${day.dateStr}"` : '',
-    day.isToday ? 'style="background:rgba(79,142,247,.05);"' : '',
+    `style="${rowStyle}"`,
   ].filter(Boolean).join(' ');
   const infoIcon = isForceEntry ? ` <span title="Tap to view audit trail" style="opacity:.7;">ℹ️</span>` : '';
 
   return `
     <div class="${rowClass}" ${rowAttrs}>
-      <span class="act-date-pill">${day.dateLabel}</span>
-      <span class="act-status-pill" style="background:${meta.bg};color:${meta.fg};">${meta.icon} ${meta.label}${infoIcon}</span>
-      ${checkTimesHtml}
-      ${barHtml}
-      <span class="act-total">${day.totalHours > 0 ? fmtH(day.totalHours) : '—'}</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="act-date-pill">${day.dateLabel}</span>
+        <span class="act-status-pill" style="background:${meta.bg};color:${meta.fg};">${meta.icon} ${meta.label}${infoIcon}</span>
+        ${checkTimesHtml}
+        ${barHtml}
+        <span class="act-total">${day.totalHours > 0 ? fmtH(day.totalHours) : '—'}</span>
+      </div>
+      ${day.notes ? `<div style="font-size:11px;color:var(--txt2);margin-top:4px;padding-left:2px;">📝 ${esc(day.notes)}</div>` : ''}
     </div>`;
 }
 
@@ -426,6 +439,10 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
     const checkIn   = timesIn[0] || null;
     const checkOut  = timesOut[timesOut.length - 1] || null;
 
+    // Notes from every worked entry that day — what the employee
+    // actually wrote about what they did, not just the hours.
+    const notes = [...new Set(worked.map(e => (e.notes || '').trim()).filter(Boolean))].join(' · ');
+
     rows.push(buildActivityRow({
       dateStr,
       dateLabel: new Date(dateStr + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
@@ -435,6 +452,7 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
       projects,
       checkIn,
       checkOut,
+      notes,
     }));
   }
 
