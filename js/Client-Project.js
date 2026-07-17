@@ -369,6 +369,33 @@ ClientProjectAPI.ingestTimesheetData = function(entries) {
 // ══════════════════════════════════════════════════════════════
 // ENTRY POINTS — called by manager.js's and teamleader.js's tab routers.
 // ══════════════════════════════════════════════════════════════
+let CP_HISTORICAL_DATA = []; // pre-system monthly-total records from Historical Import — { clientId, projectId, month, year, employeeId, employeeName, totalHours, ... }
+
+// Loaded alongside client/project master data every time Project or
+// Client tab opens (matches the "always fresh" pattern already used
+// for loadClientData/loadProjectData). Historical data is
+// supplementary — a failure here shouldn't break the whole tab, so
+// it's caught locally rather than propagating.
+async function loadHistoricalData() {
+  try {
+    CP_HISTORICAL_DATA = await sheetGET({ action: 'getHistoricalRecords', filters: encodeURIComponent(JSON.stringify({})) });
+  } catch (err) {
+    console.warn('[client-project] Failed to load historical data:', err.message);
+    CP_HISTORICAL_DATA = [];
+  }
+}
+
+const HIST_MONTH_NUM_ = {
+  January: '01', February: '02', March: '03', April: '04', May: '05', June: '06',
+  July: '07', August: '08', September: '09', October: '10', November: '11', December: '12',
+};
+// "February", "2025" -> "2025-02", matching the 'YYYY-MM' keys the
+// timesheet-derived monthly aggregation already uses internally.
+function histMonthYearToKey_(monthName, year) {
+  const num = HIST_MONTH_NUM_[monthName];
+  return num ? `${year}-${num}` : null;
+}
+
 async function renderClientTab(content) {
   ensureCPStyles();
   CP_ROLE = getCPRole();
@@ -381,7 +408,7 @@ async function renderClientTab(content) {
     // Client cards need both clients (for the grid itself) and
     // projects (for the "project count" / "active" badge on each
     // card, and for the scoped grid on the Client Detail page).
-    await Promise.all([loadClientData(), loadProjectData()]);
+    await Promise.all([loadClientData(), loadProjectData(), loadHistoricalData()]);
   } catch(err) {
     content.innerHTML = `<div class="slot-error">Failed to load clients: ${esc(err.message)}</div>`;
     return;
@@ -399,7 +426,7 @@ async function renderProjectTab(content) {
   }
   content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading projects…</span></div>`;
   try {
-    await Promise.all([loadClientData(), loadProjectData()]);
+    await Promise.all([loadClientData(), loadProjectData(), loadHistoricalData()]);
   } catch(err) {
     content.innerHTML = `<div class="slot-error">Failed to load projects: ${esc(err.message)}</div>`;
     return;
@@ -474,7 +501,18 @@ function wireClientCardEvents(content) {
   content.querySelectorAll('.cp-client-view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const client = CP_CLIENTS.find(c => c.id === btn.dataset.id);
-      if (client) renderClientDetail(content, client);
+      if (!client) return;
+
+      const clientProjects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === client.id));
+      if (!clientProjects.length) {
+        toast?.('i', 'No projects yet', `${client.name} has no projects to view.`);
+        return;
+      }
+      // Most recently active project first — jump straight in, no
+      // intermediate list. Prev/Next on the Project Detail page (see
+      // openProjectDetail) cycles through the rest of this client's
+      // projects in the same order.
+      openProjectDetail(content, clientProjects[0].projectId, { onBack: () => renderClientCards(content) });
     });
   });
   content.querySelectorAll('.cp-client-edit-btn').forEach(btn => {
@@ -723,6 +761,56 @@ function openClientEditor(content, client = null, onDone = null) {
 // used by the main Project tab. "+ Add Project" is preset to this
 // client (same mechanism the old tree's "+ Add Project" used).
 // ══════════════════════════════════════════════════════════════
+// Project Performance, side by side — one card per project (Time +
+// Constant bars, reusing buildProjectPerfRow exactly as it already
+// renders on the Client card), arranged in a responsive grid instead
+// of the full project-detail cards. Reuses wireProjectCards for the
+// View Details click-through since these buttons share the same
+// class/data-id convention.
+async function renderClientProjectPerformanceInto(content, gridEl, projects, onBack) {
+  if (!gridEl) return;
+  const isManager = CP_ROLE === 'manager';
+
+  gridEl.innerHTML = buildClientProjectPerfGrid(projects, isManager, null);
+  wireProjectCards(content, gridEl, projects, onBack);
+
+  if (isManager) {
+    await ensureSalaryDataLoaded();
+    if (!document.body.contains(gridEl)) return; // user navigated away while this was loading
+    const costMap = {};
+    projects.forEach(p => { costMap[p.projectId] = calculateProjectCost(p); });
+    gridEl.innerHTML = buildClientProjectPerfGrid(projects, isManager, costMap);
+    wireProjectCards(content, gridEl, projects, onBack);
+  }
+}
+
+function buildClientProjectPerfGrid(projects, isManager, costMap) {
+  if (!projects.length) return `<div class="chart-empty">No projects yet for this client.</div>`;
+
+  const perProject = projects.map(p => {
+    const totals = getProjectEmployeeTotals(p);
+    const totalHours = totals.reduce((s, t) => s + t.hours, 0);
+    const constant = parseFloat(p.projectConstant) || 0;
+    return { project: p, totals, totalHours, constant };
+  });
+
+  const maxHours    = Math.max(...perProject.map(x => x.totalHours), 0.01);
+  const maxConstant = Math.max(...perProject.map(x => x.constant), 0.01);
+
+  const cards = perProject.map(({ project: p, totals, totalHours, constant }) => {
+    const cost = isManager ? (costMap ? costMap[p.projectId] : null) : null;
+    return `
+      <div class="cp-card">
+        ${buildProjectPerfRow(p, totals, totalHours, maxHours, constant, maxConstant, isManager, cost, true)}
+        <button class="cp-project-view-btn" data-id="${esc(p.projectId)}" style="margin-top:1rem;width:100%;
+          background:var(--a1);color:#fff;border:none;border-radius:8px;padding:8px 14px;
+          font-size:12px;font-weight:700;cursor:pointer;">View Details →</button>
+      </div>`;
+  }).join('');
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.25rem;">${cards}</div>`;
+}
+
 function renderClientDetail(content, client) {
   const isManager = CP_ROLE === 'manager';
   const projects = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === client.id)); // most recently active project first
@@ -755,7 +843,7 @@ function renderClientDetail(content, client) {
     openProjectDetail(content, null, { onBack: () => renderClientDetail(content, client), presetClientId: client.id }));
 
   if (projects.length) {
-    renderProjectCardsInto(content, $('cpClientProjectGrid'), projects, () => renderClientDetail(content, client));
+    renderClientProjectPerformanceInto(content, $('cpClientProjectGrid'), projects, () => renderClientDetail(content, client));
   }
 }
 
@@ -919,6 +1007,28 @@ function buildProjectNotesPreview(p) {
 //   Team Leader: view-only on Name/ID/Planned/Status, edit
 //            Completed/Delivered. Constant/Value never rendered
 //            (and never even present in the data for a TL request).
+// A small "thumbnail" chip for Prev/Next project navigation —
+// colored avatar (same getProjectColor used throughout) plus name
+// and ID, so the destination project is visible before clicking,
+// not a blind arrow.
+function buildProjNavChip(proj, direction) {
+  const initials = (proj.projectName || proj.projectId || '?').trim().slice(0, 2).toUpperCase();
+  const color = getProjectColor(proj.projectId);
+  const arrow = direction === 'prev' ? '◀' : '▶';
+  const avatar = `<span style="width:22px;height:22px;border-radius:50%;background:${color};flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;">${esc(initials)}</span>`;
+  const label = `<span style="display:flex;flex-direction:column;line-height:1.25;${direction === 'next' ? 'align-items:flex-end;' : ''}min-width:0;">
+    <span style="font-size:10.5px;font-weight:700;color:var(--txt1);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(proj.projectName || proj.projectId)}">${esc(proj.projectName || proj.projectId)}</span>
+    <span style="font-size:9px;color:var(--txt2);">${esc(proj.projectId)}</span>
+  </span>`;
+
+  return `
+    <button class="cp-btn-ghost cp-proj-nav-chip" data-project-id="${esc(proj.projectId)}"
+      style="display:flex;align-items:center;gap:7px;text-align:left;padding:6px 10px;">
+      ${direction === 'prev' ? `<span>${arrow}</span>${avatar}${label}` : `${label}${avatar}<span>${arrow}</span>`}
+    </button>`;
+}
+
 async function openProjectDetail(content, projectId, opts = {}) {
   const goBack = opts.onBack || (() => renderProjectList(content));
   const presetClientId = opts.presetClientId || '';
@@ -1070,9 +1180,33 @@ async function openProjectDetail(content, projectId, opts = {}) {
         </div>
       </div>`;
 
+  // Prev/Next through this client's other projects, most recently
+  // active first — same order as clicking a Client card jumps into
+  // its first project. Only meaningful for an existing project with
+  // at least one sibling under the same client.
+  let clientSiblings = [];
+  let clientSiblingIdx = -1;
+  if (!isNew && project.clientId) {
+    clientSiblings = sortProjectsByRecency(CP_PROJECTS.filter(p => p.clientId === project.clientId));
+    clientSiblingIdx = clientSiblings.findIndex(p => p.projectId === project.projectId);
+  }
+  const hasSiblingNav = clientSiblings.length > 1 && clientSiblingIdx !== -1;
+
   content.innerHTML = `
     <div style="margin-bottom:1rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-      <button id="cpProjBack" class="cp-back-btn">← Back</button>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button id="cpProjBack" class="cp-back-btn">← Back</button>
+        ${hasSiblingNav ? `
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${clientSiblingIdx > 0
+              ? buildProjNavChip(clientSiblings[clientSiblingIdx - 1], 'prev')
+              : `<span class="cp-btn-ghost" style="opacity:.35;cursor:default;">◀ Prev</span>`}
+            <span style="font-size:10.5px;color:var(--txt2);white-space:nowrap;">${clientSiblingIdx + 1} of ${clientSiblings.length}</span>
+            ${clientSiblingIdx < clientSiblings.length - 1
+              ? buildProjNavChip(clientSiblings[clientSiblingIdx + 1], 'next')
+              : `<span class="cp-btn-ghost" style="opacity:.35;cursor:default;">Next ▶</span>`}
+          </div>` : ''}
+      </div>
       ${!isNew ? `
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button id="cpReportMonth" class="cp-btn-ghost">📥 This Month</button>
@@ -1083,6 +1217,9 @@ async function openProjectDetail(content, projectId, opts = {}) {
   `;
 
   $('cpProjBack').addEventListener('click', goBack);
+  content.querySelectorAll('.cp-proj-nav-chip').forEach(chip => {
+    chip.addEventListener('click', () => openProjectDetail(content, chip.dataset.projectId, opts));
+  });
   $('cpSaveBtn').addEventListener('click', () => saveProjectFromForm(content, isNew, project, goBack));
   $('cpDeleteBtn')?.addEventListener('click', () => deleteProjectFromForm(content, project, goBack));
   $('cpReportMonth')?.addEventListener('click', () => openProjectReport(project, 'month'));
@@ -1223,6 +1360,16 @@ function getProjectEmployeeTotals(project) {
   entries.forEach(e => {
     totals[e.empId] = (totals[e.empId] || 0) + parseH(e.hours);
   });
+
+  // Historical (pre-system) hours, added on top of live timesheet
+  // hours — matched by Project ID, not name, since that's what
+  // Historical Import records carry.
+  CP_HISTORICAL_DATA
+    .filter(h => h.projectId === project.projectId)
+    .forEach(h => {
+      totals[h.employeeId] = (totals[h.employeeId] || 0) + (Number(h.totalHours) || 0);
+    });
+
   return Object.entries(totals)
     .map(([empId, hours]) => {
       const emp = CP_EMPLOYEES.find(x => x.id === empId);
@@ -1315,10 +1462,15 @@ function fmtMonthShort(monthKey) {
 // column was backfilled after work had already begun, or vice versa).
 function getProjectMonthlyTimeline(project) {
   const entries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
+  const histRecords = CP_HISTORICAL_DATA.filter(h => h.projectId === project.projectId);
 
   let earliestMonth = null;
   entries.forEach(e => {
     const m = (e.date || '').slice(0, 7);
+    if (m && (!earliestMonth || m < earliestMonth)) earliestMonth = m;
+  });
+  histRecords.forEach(h => {
+    const m = histMonthYearToKey_(h.month, h.year);
     if (m && (!earliestMonth || m < earliestMonth)) earliestMonth = m;
   });
   const createdMonth = monthFromAppTimestamp(project.createdDate);
@@ -1334,6 +1486,13 @@ function getProjectMonthlyTimeline(project) {
     if (!byMonth[m]) byMonth[m] = { hours: 0, members: new Set() };
     byMonth[m].hours += parseH(e.hours);
     byMonth[m].members.add(e.empId);
+  });
+  histRecords.forEach(h => {
+    const m = histMonthYearToKey_(h.month, h.year);
+    if (!m) return;
+    if (!byMonth[m]) byMonth[m] = { hours: 0, members: new Set() };
+    byMonth[m].hours += Number(h.totalHours) || 0;
+    byMonth[m].members.add(h.employeeId);
   });
 
   const months = [];
