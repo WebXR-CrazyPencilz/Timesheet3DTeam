@@ -1179,11 +1179,12 @@ async function openProjectDetail(content, projectId, opts = {}) {
       <div style="max-width:1400px;margin:0 auto;display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
         <div>
           ${formCard}
-          <div id="cpTaskSection" style="margin-top:1.25rem;"></div>
+          <div id="cpTimelineSection" style="margin-top:1.25rem;"></div>
           ${isManager ? `<div id="cpCostSection" style="margin-top:1.25rem;"></div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:1.25rem;">
-          <div id="cpTimelineSection"></div>
+          <div id="cpTaskSection"></div>
+          <div id="cpMonthlyPerfSection"></div>
           <div id="cpTeamSection"></div>
         </div>
       </div>`;
@@ -1240,6 +1241,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
 
   if (!isNew) renderProjectTimelineSection(project);
   if (!isNew) renderProjectTaskSection(project);
+  if (!isNew) renderProjectMonthlyPerfSection(project);
   if (!isNew) renderProjectTeamSection(project);
   if (!isNew && isManager) renderProjectCostSection(project);
 }
@@ -1564,29 +1566,95 @@ function renderProjectTimelineSection(project) {
   const el = $('cpTimelineSection');
   if (!el) return;
 
+  const totals = getProjectEmployeeTotals(project); // already includes historical hours
+  const totalHours = totals.reduce((s, t) => s + t.hours, 0);
+  const isManager  = CP_ROLE === 'manager';
+
+  if (totalHours === 0) {
+    el.innerHTML = `
+      <div class="cp-card">
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">📅 Project Timeline</div>
+        <div style="font-size:12.5px;color:var(--txt2);">No activity logged yet.</div>
+      </div>`;
+    return;
+  }
+
+  // Single overall bar — total hours, segmented by employee (same
+  // getEmployeeColor palette used everywhere else in the app), hover
+  // per segment for that person's exact contribution. Replaces the
+  // old month-by-month row list, which is still available in full via
+  // the Team Performance day-by-day log below.
+  const segmentsHtml = totals.map(t => {
+    const segPct = (t.hours / totalHours) * 100;
+    return `<div style="width:${segPct}%;height:100%;background:${getEmployeeColor(t.empId)};"
+      title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+  }).join('');
+
+  // Constant / Value row — same fields and layout as the Client
+  // Detail page's Project Performance bars (buildProjectPerfRow),
+  // Manager-only per the existing server-side permission boundary
+  // (Code.gs strips Constant/Value for non-manager roles, this is
+  // just the matching UI-side gate).
+  let moneyHtml = '';
+  if (isManager) {
+    const constant = parseFloat(project.projectConstant) || 0;
+    const value    = parseFloat(project.projectValue) || 0;
+    const hasConstant = constant > 0;
+    moneyHtml = `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="flex:0 0 84px;font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Constant</span>
+          <div style="flex:1;min-width:0;height:16px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+            <div style="width:${hasConstant ? 100 : 0}%;height:100%;background:${hasConstant ? '#f59e0b' : 'var(--border-md)'};"></div>
+          </div>
+          <span style="flex:0 0 84px;text-align:right;font-size:13px;font-weight:700;color:var(--txt1);">${fmtCPRupees(constant)}</span>
+        </div>
+        <div style="font-size:10.5px;color:var(--txt2);margin-top:6px;padding-left:96px;">Value: ${fmtCPRupees(value)}</div>
+      </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="cp-card">
+      <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:1rem;">📅 Project Timeline</div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="flex:0 0 84px;font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Total</span>
+        <div style="flex:1;min-width:0;height:16px;background:var(--surface2);border-radius:8px;overflow:hidden;display:flex;">
+          ${segmentsHtml}
+        </div>
+        <span style="flex:0 0 84px;text-align:right;font-size:13px;font-weight:700;color:var(--txt1);white-space:nowrap;">${fmtHM(totalHours)}</span>
+      </div>
+      ${moneyHtml}
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════
+// OVERALL PERFORMANCE BY MONTH — the month-by-month history that
+// used to live inside Project Timeline before that was simplified
+// to a single total bar. Reuses getProjectMonthlyTimeline(), which
+// already merges live timesheet entries with Historical Import
+// (pre-system) records — so months logged before this app existed
+// still show up here, not just live-entry months. Each month's bar
+// is segmented by employee, same color logic as everywhere else.
+// ══════════════════════════════════════════════════════════════
+function renderProjectMonthlyPerfSection(project) {
+  const el = $('cpMonthlyPerfSection');
+  if (!el) return;
+
   const { months, maxHours } = getProjectMonthlyTimeline(project);
   if (!months.length) {
     el.innerHTML = `
       <div class="cp-card">
-        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">📅 Project Timeline</div>
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.5rem;">📊 Overall Performance</div>
         <div style="font-size:12.5px;color:var(--txt2);">No activity logged yet, and no creation date on record to start a timeline from.</div>
       </div>`;
     return;
   }
 
-  const nowMonth      = todayStr().slice(0, 7);
-  const startLabel    = fmtCPMonthLabel(months[0].month);
-  const totalHours    = months.reduce((s, m) => s + m.hours, 0);
-  const activeMonths  = months.filter(m => m.hours > 0).length;
-  const isManager     = CP_ROLE === 'manager';
+  const nowMonth     = todayStr().slice(0, 7);
+  const startLabel   = fmtCPMonthLabel(months[0].month);
+  const totalHours   = months.reduce((s, m) => s + m.hours, 0);
+  const activeMonths = months.filter(m => m.hours > 0).length;
 
-  // Horizontal bar per month (label left, bar middle, duration
-  // right) — same visual language as the Attendance & Activity list
-  // on the Employee Detail page. Each bar is now segmented by
-  // employee (same getEmployeeColor palette used everywhere else),
-  // matching the Project Performance bars on the Client Detail page,
-  // so a month with several contributors visibly shows who worked
-  // on it instead of one flat color.
   const rows = months.map((m, i) => {
     const pct    = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 2) : 0;
     const isNow  = m.month === nowMonth;
@@ -1609,37 +1677,13 @@ function renderProjectTimelineSection(project) {
       </div>`;
   }).join('');
 
-  // Constant / Value / Profit row — same fields and layout as the
-  // Client Detail page's Project Performance bars (buildProjectPerfRow),
-  // Manager-only per the existing server-side permission boundary
-  // (Code.gs strips Constant/Value for non-manager roles, this is
-  // just the matching UI-side gate).
-  let moneyHtml = '';
-  if (isManager) {
-    const constant = parseFloat(project.projectConstant) || 0;
-    const value    = parseFloat(project.projectValue) || 0;
-    const hasConstant = constant > 0;
-    moneyHtml = `
-      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="flex:0 0 84px;font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Constant</span>
-          <div style="flex:1;min-width:0;height:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
-            <div style="width:${hasConstant ? 100 : 0}%;height:100%;background:${hasConstant ? '#f59e0b' : 'var(--border-md)'};"></div>
-          </div>
-          <span style="flex:0 0 68px;text-align:right;font-size:12px;font-weight:700;color:var(--txt1);">${fmtCPRupees(constant)}</span>
-        </div>
-        <div style="font-size:10.5px;color:var(--txt2);margin-top:6px;padding-left:96px;">Value: ${fmtCPRupees(value)}</div>
-      </div>`;
-  }
-
   el.innerHTML = `
     <div class="cp-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:6px;">
-        <div style="font-weight:700;font-size:14px;color:var(--txt1);">📅 Project Timeline</div>
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);">📊 Overall Performance</div>
         <div style="font-size:11.5px;color:var(--txt2);">Since ${esc(startLabel)} · ${activeMonths}/${months.length} active month${months.length !== 1 ? 's' : ''} · ${fmtHM(totalHours)} total</div>
       </div>
       <div>${rows}</div>
-      ${moneyHtml}
     </div>`;
 }
 
@@ -1701,15 +1745,23 @@ function renderProjectTaskSection(project) {
   if (!el) return;
 
   const { tasks, grandTotal } = getProjectTaskBreakdown(project);
+  const maxTaskHours = Math.max(...tasks.map(t => t.totalHours), 0.01);
 
   const rows = tasks.map(t => {
-    const hasHours = t.totalHours > 0;
+    const hasHours  = t.totalHours > 0;
+    // How far this task's bar extends relative to the busiest task —
+    // this is what was missing: every bar used to fill 100% of its
+    // row regardless of hours, so a 3h task looked identical in
+    // length to an 85h task. Now shorter tasks get proportionally
+    // shorter bars (floor of 4% so a small-but-real task is still
+    // visible, not a sliver).
+    const fillPct   = hasHours ? Math.max((t.totalHours / maxTaskHours) * 100, 4) : 100;
 
     // Label row above the bar — one span per employee, sized to the
     // same width as their segment below so it sits roughly above it,
     // showing "Name Xh Ym".
     const labelsHtml = hasHours
-      ? `<div style="display:flex;margin-bottom:4px;">
+      ? `<div style="display:flex;width:${fillPct}%;margin-bottom:4px;">
           ${t.employees.map(e => {
             const pct = (e.hours / t.totalHours) * 100;
             return `<div style="width:${pct}%;min-width:0;overflow:hidden;font-size:10px;font-weight:700;
@@ -1723,15 +1775,19 @@ function renderProjectTaskSection(project) {
     // Segmented bar itself — a thin divider between segments (not
     // red, per this app's color convention: red is reserved for
     // loss/error only) keeps each employee's block visually distinct.
+    // The bar now sits inside a full-width track so its fillPct-based
+    // length is visible against the row's max possible extent.
     const barHtml = hasHours
-      ? `<div style="flex:1;height:22px;border-radius:6px;overflow:hidden;display:flex;border:2px solid var(--border-md);">
-          ${t.employees.map((e, i) => {
-            const pct = (e.hours / t.totalHours) * 100;
-            const isLastSeg = i === t.employees.length - 1;
-            return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(e.empId)};
-              ${isLastSeg ? '' : 'border-right:2px solid rgba(255,255,255,.35);'}"
-              title="${esc(e.name)}: ${fmtHM(e.hours)}"></div>`;
-          }).join('')}
+      ? `<div style="flex:1;min-width:0;height:22px;border-radius:6px;background:var(--surface2);border:2px solid var(--border-md);overflow:hidden;">
+          <div style="width:${fillPct}%;height:100%;display:flex;">
+            ${t.employees.map((e, i) => {
+              const pct = (e.hours / t.totalHours) * 100;
+              const isLastSeg = i === t.employees.length - 1;
+              return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(e.empId)};
+                ${isLastSeg ? '' : 'border-right:2px solid rgba(255,255,255,.35);'}"
+                title="${esc(e.name)}: ${fmtHM(e.hours)}"></div>`;
+            }).join('')}
+          </div>
         </div>`
       : `<div style="flex:1;height:22px;border-radius:6px;border:2px solid var(--border-md);background:transparent;"></div>`;
 
