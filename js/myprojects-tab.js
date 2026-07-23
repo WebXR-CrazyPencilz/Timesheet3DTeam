@@ -240,6 +240,9 @@ function openMyProjectDetail(projectName) {
       </div>`;
   }).join('') : `<div style="font-size:12px;color:var(--txt2);">No entries yet.</div>`;
 
+  const mgrNote = (proj?.managerNotes || '').trim();
+  const tlNote  = (proj?.teamLeaderNotes || '').trim();
+
   container.innerHTML = `
     <button id="myProjBackBtn" class="cp-back-btn" style="margin-bottom:1rem;">← Back</button>
 
@@ -262,6 +265,26 @@ function openMyProjectDetail(projectName) {
         <div style="background:var(--surface2);border-radius:8px;padding:8px 10px;">
           <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;">End Date</div>
           <div style="font-size:12.5px;font-weight:700;color:var(--txt1);">${esc(fmtMyProjDate(proj?.endDate))}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:14px;padding:1.2rem;margin-bottom:1.1rem;">
+      <div style="font-weight:700;font-size:14px;color:var(--txt1);margin-bottom:.9rem;">🗒️ Notes</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px;">Manager Notes</div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;
+            font-size:12.5px;color:${mgrNote ? 'var(--txt1)' : 'var(--txt2)'};font-style:${mgrNote ? 'normal' : 'italic'};min-height:20px;">
+            ${esc(mgrNote || 'No notes yet')}
+          </div>
+        </div>
+        <div>
+          <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px;">Team Leader Notes</div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;
+            font-size:12.5px;color:${tlNote ? 'var(--txt1)' : 'var(--txt2)'};font-style:${tlNote ? 'normal' : 'italic'};min-height:20px;">
+            ${esc(tlNote || 'No notes yet')}
+          </div>
         </div>
       </div>
     </div>

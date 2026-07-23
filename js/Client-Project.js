@@ -79,9 +79,9 @@ const CP_STATUS_META = {
 // projects spread across the palette without collisions being
 // likely for a normal-sized project list.
 const CP_PROJECT_PALETTE = [
-  '#4f8ef7', '#7c5cfc', '#34d399', '#fbbf24', '#f87171', '#22d3ee',
+  '#4f8ef7', '#7c5cfc', '#34d399', '#fbbf24', '#5eead4', '#22d3ee',
   '#fb923c', '#a78bfa', '#f472b6', '#84cc16', '#38bdf8', '#4ade80',
-  '#facc15', '#fb7185', '#818cf8', '#2dd4bf',
+  '#facc15', '#c084fc', '#818cf8', '#2dd4bf',
 ];
 
 function getColorForKey(key) {
@@ -879,25 +879,14 @@ function renderProjectList(content) {
 }
 
 // Renders a set of project cards into a given grid element. Renders
-// immediately without the Profit/Loss chip (so the grid isn't
-// blocked waiting on the salary fetch), then — for Manager only —
-// loads salary data once and re-renders with the chip filled in.
-// Team Leaders never see this chip at all (same permission boundary
-// as the rest of this module: they never receive Project
-// Constant/Value, so there's nothing to compute a profit chip from).
+// Card is a simple scan-list entry now (no Profit/Loss chip, no
+// salary-dependent second pass needed) — renders once, synchronously.
 async function renderProjectCardsInto(content, gridEl, projects, onBack) {
   if (!gridEl) return;
   const isManager = CP_ROLE === 'manager';
 
-  gridEl.innerHTML = projects.map(p => buildProjectCard(p, isManager, null)).join('');
+  gridEl.innerHTML = projects.map(p => buildProjectCard(p, isManager)).join('');
   wireProjectCards(content, gridEl, projects, onBack);
-
-  if (isManager) {
-    await ensureSalaryDataLoaded();
-    if (!document.body.contains(gridEl)) return; // user navigated away while this was loading
-    gridEl.innerHTML = projects.map(p => buildProjectCard(p, isManager, calculateProjectCost(p))).join('');
-    wireProjectCards(content, gridEl, projects, onBack);
-  }
 }
 
 function wireProjectCards(content, gridEl, projects, onBack) {
@@ -909,64 +898,82 @@ function wireProjectCards(content, gridEl, projects, onBack) {
   });
 }
 
-function buildProjectCard(p, isManager, costResult) {
+function buildProjectCard(p, isManager) {
   const client = CP_CLIENTS.find(c => c.id === p.clientId);
-  const meta   = CP_STATUS_META[p.status] || CP_STATUS_META['In Progress'];
   const initials = (p.projectName || p.projectId || '?').trim().slice(0, 2).toUpperCase();
   const color  = getProjectColor(p.projectId);
 
-  let profitBox = '';
-  if (isManager) {
-    if (costResult) {
-      const isProfit = costResult.profit >= 0;
-      profitBox = `
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">${isProfit ? 'Profit' : 'Loss'}</div>
-          <div class="cp-metric-val" style="color:${isProfit ? '#34d399' : '#f87171'};">${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(costResult.profit))}</div>
-        </div>`;
-    } else {
-      profitBox = `
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">Profit</div>
-          <div class="cp-metric-val" style="color:var(--txt2);font-size:11px;font-weight:600;">Calculating…</div>
-        </div>`;
-    }
-  }
+  const totals = getProjectEmployeeTotals(p); // already includes historical hours, see getProjectEmployeeTotals
+  const totalHours = totals.reduce((s, t) => s + t.hours, 0);
 
-  // Basic details only, by design — Team Hours, Timeline, Notes, and
-  // the full Cost breakdown all live one click away on the Project
-  // Detail page. This card is a scan-list entry, not a dashboard.
+  // End Date box shows the actual date once set; until then it shows
+  // the project's current status instead, so the slot is never just
+  // empty.
+  const endOrStatusLabel = p.endDate ? 'End Date' : 'Status';
+  const endOrStatusValue = p.endDate ? fmtCPDateShort(p.endDate) : p.status;
+
+  const consumedBarHtml = totalHours > 0
+    ? totals.map(t => {
+        const pct = (t.hours / totalHours) * 100;
+        return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(t.empId)};"
+          title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+      }).join('')
+    : `<div style="width:100%;height:100%;background:var(--border-md);"></div>`;
+
+  // Legend row under the bar — same per-employee colors/hours as the
+  // bar segments above, spelled out as text. The bar's title="" tooltip
+  // doesn't work on touch devices, so this keeps the breakdown visible
+  // without requiring hover. Only rendered when there's more than one
+  // contributor; a single-employee bar is already self-explanatory.
+  const consumedLegendHtml = totals.length > 1
+    ? `<div style="display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:8px;">
+        ${totals
+          .slice()
+          .sort((a, b) => b.hours - a.hours)
+          .map(t => `
+            <div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--txt2);">
+              <span style="width:8px;height:8px;border-radius:50%;background:${getEmployeeColor(t.empId)};flex-shrink:0;"></span>
+              <span>${esc(t.name)} · ${fmtHM(t.hours)}</span>
+            </div>`).join('')}
+      </div>`
+    : '';
+
+  // Very simple by design — a scan-list entry, not a dashboard.
+  // Planned/Completed/Profit/Loss/Notes/Timeline all still live one
+  // click away on the Project Detail page.
   return `
     <div class="cp-entity-card">
-      <div class="cp-entity-head">
-        <div class="cp-entity-avatar" style="background:${color};">${esc(initials)}</div>
-        <div class="cp-entity-titles">
-          <div class="cp-entity-name" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
-          <div class="cp-entity-id" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1rem;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:180px;">
+          <div class="cp-entity-avatar" style="background:${color};">${esc(initials)}</div>
+          <div>
+            <div class="cp-entity-name" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
+            <div class="cp-entity-id" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <div class="cp-metric-box" style="min-width:110px;">
+            <div class="cp-metric-label">Start Date</div>
+            <div class="cp-metric-val" style="font-size:13.5px;">${esc(fmtCPDateShort(p.startDate))}</div>
+          </div>
+          <div class="cp-metric-box" style="min-width:110px;">
+            <div class="cp-metric-label">${esc(endOrStatusLabel)}</div>
+            <div class="cp-metric-val" style="font-size:13.5px;">${esc(endOrStatusValue)}</div>
+          </div>
         </div>
       </div>
 
-      <div style="margin-bottom:.9rem;">
-        <span class="cp-status-pill" style="background:${meta.bg};color:${meta.fg};">${esc(p.status)}</span>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="flex:1;height:16px;background:var(--surface2);border-radius:8px;overflow:hidden;position:relative;display:flex;">
+          ${consumedBarHtml}
+          <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+            font-size:10.5px;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.55);pointer-events:none;">
+            ${totalHours > 0 ? `${fmtHM(totalHours)} consumed` : 'No hours logged yet'}
+          </span>
+        </div>
+        <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}" style="flex-shrink:0;">View Details →</button>
       </div>
-
-      <div class="cp-entity-metrics">
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">Planned</div>
-          <div class="cp-metric-val">${p.plannedViews || 0}</div>
-        </div>
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">Completed</div>
-          <div class="cp-metric-val">${p.completedViews || 0}</div>
-        </div>
-        <div class="cp-metric-box">
-          <div class="cp-metric-label">Start Date</div>
-          <div class="cp-metric-val" style="font-size:14px;">${fmtCPDateShort(p.startDate)}</div>
-        </div>
-        ${profitBox}
-      </div>
-
-      <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}">View Details →</button>
+      ${consumedLegendHtml}
     </div>`;
 }
 
@@ -1172,6 +1179,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
       <div style="max-width:1400px;margin:0 auto;display:grid;grid-template-columns:620px 1fr;gap:1.5rem;align-items:start;">
         <div>
           ${formCard}
+          <div id="cpTaskSection" style="margin-top:1.25rem;"></div>
           ${isManager ? `<div id="cpCostSection" style="margin-top:1.25rem;"></div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:1.25rem;">
@@ -1231,6 +1239,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
   $('cpReportOverall')?.addEventListener('click', () => openProjectReport(project, 'overall'));
 
   if (!isNew) renderProjectTimelineSection(project);
+  if (!isNew) renderProjectTaskSection(project);
   if (!isNew) renderProjectTeamSection(project);
   if (!isNew && isManager) renderProjectCostSection(project);
 }
@@ -1484,20 +1493,22 @@ function getProjectMonthlyTimeline(project) {
   if (!earliestMonth) return { months: [], maxHours: 0 }; // no activity and no known creation date
 
   const nowMonth = todayStr().slice(0, 7);
-  const byMonth = {}; // { 'YYYY-MM': { hours, members:Set } }
+  const byMonth = {}; // { 'YYYY-MM': { hours, byEmp:{empId:hours} } }
   entries.forEach(e => {
     const m = (e.date || '').slice(0, 7);
     if (!m) return;
-    if (!byMonth[m]) byMonth[m] = { hours: 0, members: new Set() };
-    byMonth[m].hours += parseH(e.hours);
-    byMonth[m].members.add(e.empId);
+    if (!byMonth[m]) byMonth[m] = { hours: 0, byEmp: {} };
+    const h = parseH(e.hours);
+    byMonth[m].hours += h;
+    byMonth[m].byEmp[e.empId] = (byMonth[m].byEmp[e.empId] || 0) + h;
   });
   histRecords.forEach(h => {
     const m = histMonthYearToKey_(h.month, h.year);
     if (!m) return;
-    if (!byMonth[m]) byMonth[m] = { hours: 0, members: new Set() };
-    byMonth[m].hours += Number(h.totalHours) || 0;
-    byMonth[m].members.add(h.employeeId);
+    if (!byMonth[m]) byMonth[m] = { hours: 0, byEmp: {} };
+    const hrs = Number(h.totalHours) || 0;
+    byMonth[m].hours += hrs;
+    byMonth[m].byEmp[h.employeeId] = (byMonth[m].byEmp[h.employeeId] || 0) + hrs;
   });
 
   const months = [];
@@ -1505,7 +1516,16 @@ function getProjectMonthlyTimeline(project) {
   let guard = 0; // safety cap (20 years) against a corrupted date producing a runaway loop
   while (cursor <= nowMonth && guard < 240) {
     const bucket = byMonth[cursor];
-    months.push({ month: cursor, hours: bucket ? bucket.hours : 0, memberCount: bucket ? bucket.members.size : 0 });
+    const totals = bucket
+      ? Object.entries(bucket.byEmp)
+          .map(([empId, hours]) => {
+            const emp = CP_EMPLOYEES.find(x => x.id === empId);
+            return { empId, name: emp ? emp.name : empId, hours };
+          })
+          .filter(t => t.hours > 0)
+          .sort((a, b) => b.hours - a.hours)
+      : [];
+    months.push({ month: cursor, hours: bucket ? bucket.hours : 0, memberCount: totals.length, totals });
     cursor = addOneMonthStr(cursor);
     guard++;
   }
@@ -1558,24 +1578,59 @@ function renderProjectTimelineSection(project) {
   const startLabel    = fmtCPMonthLabel(months[0].month);
   const totalHours    = months.reduce((s, m) => s + m.hours, 0);
   const activeMonths  = months.filter(m => m.hours > 0).length;
+  const isManager     = CP_ROLE === 'manager';
 
   // Horizontal bar per month (label left, bar middle, duration
   // right) — same visual language as the Attendance & Activity list
-  // on the Employee Detail page, instead of the old vertical candles.
+  // on the Employee Detail page. Each bar is now segmented by
+  // employee (same getEmployeeColor palette used everywhere else),
+  // matching the Project Performance bars on the Client Detail page,
+  // so a month with several contributors visibly shows who worked
+  // on it instead of one flat color.
   const rows = months.map((m, i) => {
     const pct    = m.hours > 0 ? Math.max((m.hours / maxHours) * 100, 2) : 0;
     const isNow  = m.month === nowMonth;
     const isLast = i === months.length - 1;
+    const segmentsHtml = m.hours > 0
+      ? m.totals.map(t => {
+          const segPct = (t.hours / m.hours) * 100;
+          return `<div style="width:${segPct}%;height:100%;background:${getEmployeeColor(t.empId)};"
+            title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
+        }).join('')
+      : '';
     return `
       <div style="display:flex;align-items:center;gap:12px;padding:8px 0;${isLast ? '' : 'border-bottom:1px solid var(--border);'}"
         title="${esc(fmtCPMonthLabel(m.month))}: ${fmtHM(m.hours)}${m.memberCount ? ' · ' + m.memberCount + ' member' + (m.memberCount !== 1 ? 's' : '') : ''}">
         <span style="flex:0 0 84px;font-size:12px;font-weight:700;color:${isNow ? 'var(--a1)' : 'var(--txt1)'};white-space:nowrap;">${esc(fmtMonthShort(m.month))}${isNow ? ' •' : ''}</span>
-        <div style="flex:1;min-width:0;height:12px;background:var(--surface2);border-radius:6px;overflow:hidden;">
-          <div style="width:${pct}%;height:100%;background:var(--a1);border-radius:6px;"></div>
+        <div style="flex:1;min-width:0;height:12px;background:var(--surface2);border-radius:6px;overflow:hidden;display:flex;">
+          ${m.hours > 0 ? segmentsHtml : `<div style="width:${pct}%;height:100%;background:var(--border-md);"></div>`}
         </div>
         <span style="flex:0 0 68px;text-align:right;font-size:12px;font-weight:${m.hours > 0 ? '700' : '400'};color:${m.hours > 0 ? 'var(--txt1)' : 'var(--txt2)'};">${m.hours > 0 ? fmtHM(m.hours) : '—'}</span>
       </div>`;
   }).join('');
+
+  // Constant / Value / Profit row — same fields and layout as the
+  // Client Detail page's Project Performance bars (buildProjectPerfRow),
+  // Manager-only per the existing server-side permission boundary
+  // (Code.gs strips Constant/Value for non-manager roles, this is
+  // just the matching UI-side gate).
+  let moneyHtml = '';
+  if (isManager) {
+    const constant = parseFloat(project.projectConstant) || 0;
+    const value    = parseFloat(project.projectValue) || 0;
+    const hasConstant = constant > 0;
+    moneyHtml = `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="flex:0 0 84px;font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Constant</span>
+          <div style="flex:1;min-width:0;height:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+            <div style="width:${hasConstant ? 100 : 0}%;height:100%;background:${hasConstant ? '#f59e0b' : 'var(--border-md)'};"></div>
+          </div>
+          <span style="flex:0 0 68px;text-align:right;font-size:12px;font-weight:700;color:var(--txt1);">${fmtCPRupees(constant)}</span>
+        </div>
+        <div style="font-size:10.5px;color:var(--txt2);margin-top:6px;padding-left:96px;">Value: ${fmtCPRupees(value)}</div>
+      </div>`;
+  }
 
   el.innerHTML = `
     <div class="cp-card">
@@ -1584,8 +1639,128 @@ function renderProjectTimelineSection(project) {
         <div style="font-size:11.5px;color:var(--txt2);">Since ${esc(startLabel)} · ${activeMonths}/${months.length} active month${months.length !== 1 ? 's' : ''} · ${fmtHM(totalHours)} total</div>
       </div>
       <div>${rows}</div>
+      ${moneyHtml}
     </div>`;
 }
+
+// ══════════════════════════════════════════════════════════════
+// TASK BREAKDOWN — one row per task type (Pre-Work, Modelling &
+// Texturing, etc., same fixed list as the Task dropdown in the
+// Employee entry form), each row a horizontal bar segmented by
+// employee — same getEmployeeColor palette used everywhere else, so
+// a person's color is consistent across Timeline/Team/Task views.
+// Tasks with no hours yet still render as an empty outlined row, so
+// the full task list is always visible, not just the ones in use.
+// Above each segment a small label shows that employee's name and
+// hours on that specific task, so a wide bar reads like a mini Gantt
+// chart at a glance instead of needing to hover for a tooltip.
+// ══════════════════════════════════════════════════════════════
+
+// { task, totalHours, employees:[{empId,name,hours}] } for every
+// distinct task name actually logged on this project (case/whitespace
+// variants merged into one row) — no padded/empty rows for task types
+// nobody has used here. Historical/pre-system rows aren't included —
+// they don't carry a Task field — so totals reflect live timesheet
+// entries only.
+function getProjectTaskBreakdown(project) {
+  const entries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave' && (e.task || '').trim());
+
+  // Group by a normalized key (trimmed, case-insensitive) so casing
+  // slips like "2D FloorPlan" vs "2D Floorplan" collapse into one
+  // row instead of splitting the same task's hours across two —
+  // display label is whichever exact casing appears most often.
+  const byTaskKey = {}; // { normKey: { labelCounts:{}, byEmp:{} } }
+  entries.forEach(e => {
+    const label = e.task.trim();
+    const key   = label.toLowerCase();
+    if (!byTaskKey[key]) byTaskKey[key] = { labelCounts: {}, byEmp: {} };
+    byTaskKey[key].labelCounts[label] = (byTaskKey[key].labelCounts[label] || 0) + 1;
+    byTaskKey[key].byEmp[e.empId] = (byTaskKey[key].byEmp[e.empId] || 0) + parseH(e.hours);
+  });
+
+  // Only tasks that actually have logged hours show up here — no
+  // padded/empty rows for task types nobody has used on this project.
+  const tasks = Object.values(byTaskKey).map(bucket => {
+    const label = Object.entries(bucket.labelCounts).sort((a, b) => b[1] - a[1])[0][0];
+    const employees = Object.entries(bucket.byEmp)
+      .map(([empId, hours]) => {
+        const emp = CP_EMPLOYEES.find(x => x.id === empId);
+        return { empId, name: emp ? emp.name : empId, hours };
+      })
+      .filter(t => t.hours > 0)
+      .sort((a, b) => b.hours - a.hours);
+    return { task: label, employees, totalHours: employees.reduce((s, e) => s + e.hours, 0) };
+  }).sort((a, b) => b.totalHours - a.totalHours);
+
+  const grandTotal = tasks.reduce((s, t) => s + t.totalHours, 0);
+  return { tasks, grandTotal };
+}
+
+function renderProjectTaskSection(project) {
+  const el = $('cpTaskSection');
+  if (!el) return;
+
+  const { tasks, grandTotal } = getProjectTaskBreakdown(project);
+
+  const rows = tasks.map(t => {
+    const hasHours = t.totalHours > 0;
+
+    // Label row above the bar — one span per employee, sized to the
+    // same width as their segment below so it sits roughly above it,
+    // showing "Name Xh Ym".
+    const labelsHtml = hasHours
+      ? `<div style="display:flex;margin-bottom:4px;">
+          ${t.employees.map(e => {
+            const pct = (e.hours / t.totalHours) * 100;
+            return `<div style="width:${pct}%;min-width:0;overflow:hidden;font-size:10px;font-weight:700;
+              color:${getEmployeeColor(e.empId)};white-space:nowrap;text-overflow:ellipsis;padding:0 4px;">
+              ${esc(e.name)} ${fmtHM(e.hours)}
+            </div>`;
+          }).join('')}
+        </div>`
+      : '';
+
+    // Segmented bar itself — a thin divider between segments (not
+    // red, per this app's color convention: red is reserved for
+    // loss/error only) keeps each employee's block visually distinct.
+    const barHtml = hasHours
+      ? `<div style="flex:1;height:22px;border-radius:6px;overflow:hidden;display:flex;border:2px solid var(--border-md);">
+          ${t.employees.map((e, i) => {
+            const pct = (e.hours / t.totalHours) * 100;
+            const isLastSeg = i === t.employees.length - 1;
+            return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(e.empId)};
+              ${isLastSeg ? '' : 'border-right:2px solid rgba(255,255,255,.35);'}"
+              title="${esc(e.name)}: ${fmtHM(e.hours)}"></div>`;
+          }).join('')}
+        </div>`
+      : `<div style="flex:1;height:22px;border-radius:6px;border:2px solid var(--border-md);background:transparent;"></div>`;
+
+    return `
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+        <div style="flex:0 0 190px;padding:10px 14px;border:2px solid var(--border-md);border-radius:6px;
+          font-size:12.5px;font-weight:600;color:var(--txt1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+          title="${esc(t.task)}">${esc(t.task)}</div>
+        <div style="flex:1;min-width:0;">
+          ${labelsHtml}
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${barHtml}
+            <span style="flex:0 0 62px;text-align:right;font-size:12px;font-weight:${hasHours ? '700' : '400'};
+              color:${hasHours ? 'var(--txt1)' : 'var(--txt2)'};">${hasHours ? fmtHM(t.totalHours) : '—'}</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cp-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:6px;">
+        <div style="font-weight:700;font-size:14px;color:var(--txt1);">🗂️ Task Breakdown</div>
+        <div style="font-size:11.5px;color:var(--txt2);">Total time consumed: ${fmtHM(grandTotal)}</div>
+      </div>
+      ${tasks.length ? rows : `<div style="font-size:12.5px;color:var(--txt2);">No tasked hours logged yet for this project.</div>`}
+    </div>`;
+}
+
 
 // ══════════════════════════════════════════════════════════════
 // TEAM PERFORMANCE — day-by-day activity log (was "Team & Hours").
@@ -1612,9 +1787,12 @@ function getProjectDailyActivity(project) {
   CP_TIMESHEET_DATA.forEach(e => {
     if (e.project !== project.projectName || e.status === 'Leave' || !e.date) return;
     if (!byDate[e.date]) byDate[e.date] = {};
-    if (!byDate[e.date][e.empId]) byDate[e.date][e.empId] = { hours: 0, notes: [] };
-    byDate[e.date][e.empId].hours += parseH(e.hours);
+    if (!byDate[e.date][e.empId]) byDate[e.date][e.empId] = { hours: 0, notes: [], byTask: {} };
+    const h = parseH(e.hours);
+    byDate[e.date][e.empId].hours += h;
     if (e.notes && e.notes.trim()) byDate[e.date][e.empId].notes.push(e.notes.trim());
+    const task = (e.task || '').trim() || 'Unspecified';
+    byDate[e.date][e.empId].byTask[task] = (byDate[e.date][e.empId].byTask[task] || 0) + h;
   });
 
   const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a)); // most recent first
@@ -1636,7 +1814,7 @@ function getProjectDailyActivity(project) {
 // browser. Keeps this dependency-free, consistent with the rest of
 // the app.
 // ══════════════════════════════════════════════════════════════
-const CP_REPORT_PALETTE = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#db2777','#65a30d'];
+const CP_REPORT_PALETTE = ['#2563eb','#7c3aed','#059669','#d97706','#0891b2','#65a30d','#c026d3','#0d9488'];
 
 // Hours + notes contributed by each team member within [fromDate,
 // toDate] (inclusive, 'YYYY-MM-DD' strings — safe to compare
@@ -1653,20 +1831,39 @@ function getProjectContribution(project, fromDate, toDate) {
   const allDays = new Set();
   entries.forEach(e => {
     allDays.add(e.date);
-    if (!byEmp[e.empId]) byEmp[e.empId] = { hours: 0, days: new Set(), notes: [] };
-    byEmp[e.empId].hours += parseH(e.hours);
+    if (!byEmp[e.empId]) byEmp[e.empId] = { hours: 0, days: new Set(), notes: [], byTask: {} };
+    const h = parseH(e.hours);
+    byEmp[e.empId].hours += h;
     byEmp[e.empId].days.add(e.date);
-    if (e.notes && e.notes.trim()) byEmp[e.empId].notes.push({ date: e.date, note: e.notes.trim(), hours: parseH(e.hours) });
+    if (e.notes && e.notes.trim()) byEmp[e.empId].notes.push({ date: e.date, note: e.notes.trim(), hours: h });
+    const task = (e.task || '').trim() || 'Unspecified';
+    byEmp[e.empId].byTask[task] = (byEmp[e.empId].byTask[task] || 0) + h;
   });
 
   const members = Object.entries(byEmp)
     .map(([empId, d]) => {
       const emp = CP_EMPLOYEES.find(x => x.id === empId);
-      return { empId, name: emp ? emp.name : empId, hours: d.hours, days: d.days.size, notes: d.notes };
+      const tasks = Object.entries(d.byTask)
+        .map(([task, hours]) => ({ task, hours }))
+        .sort((a, b) => b.hours - a.hours);
+      return { empId, name: emp ? emp.name : empId, hours: d.hours, days: d.days.size, notes: d.notes, tasks };
     })
     .sort((a, b) => b.hours - a.hours);
 
-  return { members, totalHours: members.reduce((s, m) => s + m.hours, 0), totalDays: allDays.size, fromDate, toDate };
+  // Project-wide task totals (across everyone), independent of the
+  // per-employee breakdown above — this is what drives the "Time by
+  // Task" summary bar at the top of that section.
+  const byTaskTotal = {};
+  entries.forEach(e => {
+    const task = (e.task || '').trim() || 'Unspecified';
+    byTaskTotal[task] = (byTaskTotal[task] || 0) + parseH(e.hours);
+  });
+  const totalHoursAll = members.reduce((s, m) => s + m.hours, 0);
+  const taskTotals = Object.entries(byTaskTotal)
+    .map(([task, hours]) => ({ task, hours }))
+    .sort((a, b) => b.hours - a.hours);
+
+  return { members, taskTotals, totalHours: totalHoursAll, totalDays: allDays.size, fromDate, toDate };
 }
 
 function buildReportDonutPath(cx, cy, rOuter, rInner, startDeg, endDeg) {
@@ -1700,6 +1897,68 @@ function buildReportLegendHTML(members, totalHours) {
       <span style="width:10px;height:10px;border-radius:50%;background:${CP_REPORT_PALETTE[i % CP_REPORT_PALETTE.length]};flex-shrink:0;"></span>
       <span style="color:#1e293b;">${esc(m.name)} — <b>${fmtHM(m.hours)}</b> (${pct}%)</span>
     </div>`;
+  }).join('');
+}
+
+// One color per task, stable across the whole report — a separate
+// palette from CP_REPORT_PALETTE (used for employees) so task colors
+// and employee colors are never visually confused in the same report.
+const CP_TASK_PALETTE = ['#0ea5e9','#f472b6','#84cc16','#fb923c','#a78bfa','#facc15','#2dd4bf','#f87171','#818cf8','#4ade80'];
+function reportTaskColor(task, taskList) {
+  const idx = taskList.indexOf(task);
+  return CP_TASK_PALETTE[(idx >= 0 ? idx : 0) % CP_TASK_PALETTE.length];
+}
+
+// Overall "Time by Task" summary — a single segmented bar (colored by
+// task, same idea as the employee contribution bar above it) plus a
+// legend with hours/percent per task, across the whole team.
+function buildReportTaskSummaryHTML(taskTotals, totalHours) {
+  if (!taskTotals.length) return `<div style="font-size:12px;color:#64748b;">No task data recorded for this period.</div>`;
+  const taskNames = taskTotals.map(t => t.task);
+  const bar = taskTotals.map(t => {
+    const pct = totalHours > 0 ? (t.hours / totalHours) * 100 : 0;
+    return `<div style="width:${pct}%;height:100%;background:${reportTaskColor(t.task, taskNames)};"></div>`;
+  }).join('');
+  const legend = taskTotals.map(t => {
+    const pct = totalHours > 0 ? Math.round((t.hours / totalHours) * 100) : 0;
+    return `<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12.5px;">
+      <span style="width:10px;height:10px;border-radius:50%;background:${reportTaskColor(t.task, taskNames)};flex-shrink:0;"></span>
+      <span style="color:#1e293b;">${esc(t.task)} — <b>${fmtHM(t.hours)}</b> (${pct}%)</span>
+    </div>`;
+  }).join('');
+  return `
+    <div style="height:16px;background:#f1f5f9;border-radius:8px;overflow:hidden;display:flex;margin-bottom:14px;">${bar}</div>
+    <div>${legend}</div>`;
+}
+
+// Per-employee task breakdown — one small segmented bar + legend per
+// team member, so it's visible not just how much time each person
+// spent, but what they spent it on. Uses the same task color mapping
+// as the summary bar above, so a task is the same color everywhere
+// in the report.
+function buildReportTaskByEmployeeHTML(members, taskTotals) {
+  if (!members.length) return `<div style="font-size:12px;color:#64748b;">No contributions recorded for this period.</div>`;
+  const taskNames = taskTotals.map(t => t.task);
+  return members.map(m => {
+    const bar = m.tasks.map(t => {
+      const pct = m.hours > 0 ? (t.hours / m.hours) * 100 : 0;
+      return `<div style="width:${pct}%;height:100%;background:${reportTaskColor(t.task, taskNames)};" title="${esc(t.task)}: ${fmtHM(t.hours)}"></div>`;
+    }).join('');
+    const chips = m.tasks.map(t =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:#334155;margin:0 10px 0 0;">
+        <span style="width:8px;height:8px;border-radius:50%;background:${reportTaskColor(t.task, taskNames)};flex-shrink:0;"></span>
+        ${esc(t.task)} · ${fmtHM(t.hours)}
+      </span>`
+    ).join('');
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;">
+          <span style="font-size:12.5px;font-weight:700;color:#1e293b;">${esc(m.name)}</span>
+          <span style="font-size:11.5px;color:#64748b;">${fmtHM(m.hours)}</span>
+        </div>
+        <div style="height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden;display:flex;margin-bottom:6px;">${bar}</div>
+        <div>${chips}</div>
+      </div>`;
   }).join('');
 }
 
@@ -1864,6 +2123,12 @@ function buildProjectReportHTML(project, mode, targetMonth) {
       <div>${buildReportLegendHTML(contrib.members, contrib.totalHours)}</div>
     </div>
 
+    <h2>Time by Task</h2>
+    ${buildReportTaskSummaryHTML(contrib.taskTotals, contrib.totalHours)}
+
+    <h2>Time by Task — per Team Member</h2>
+    ${buildReportTaskByEmployeeHTML(contrib.members, contrib.taskTotals)}
+
     <h2>Detailed Log</h2>
     ${buildReportLogTableHTML(contrib.members)}
 
@@ -1980,20 +2245,36 @@ function buildTeamDailyRow(date, dayData, isLast) {
   const members = Object.entries(dayData)
     .map(([empId, d]) => {
       const emp = CP_EMPLOYEES.find(x => x.id === empId);
-      return { empId, name: emp ? emp.name : empId, hours: d.hours, notes: d.notes.join(' · ') };
+      const tasks = Object.entries(d.byTask)
+        .map(([task, hours]) => ({ task, hours }))
+        .sort((a, b) => b.hours - a.hours);
+      return { empId, name: emp ? emp.name : empId, hours: d.hours, notes: d.notes.join(' · '), tasks };
     })
     .sort((a, b) => b.hours - a.hours);
 
   const dayTotal = members.reduce((s, m) => s + m.hours, 0);
   const safeTotal = dayTotal || 0.01;
 
+  // All distinct tasks logged this day, in a stable order — used so
+  // the same task gets the same color across every member's chip row
+  // for this day (reuses the report's task palette/color mapping).
+  const dayTaskNames = [...new Set(members.flatMap(m => m.tasks.map(t => t.task)))];
+
   const segments = members.map(m => {
     const pct = Math.max((m.hours / safeTotal) * 100, 3);
+    const taskSummary = m.tasks.map(t => `${t.task}: ${fmtHM(t.hours)}`).join(', ');
     return `<div style="width:${pct}%;height:100%;background:${getEmployeeColor(m.empId)};"
-      title="${esc(m.name)}: ${fmtHM(m.hours)}"></div>`;
+      title="${esc(m.name)}: ${fmtHM(m.hours)}${taskSummary ? ' — ' + esc(taskSummary) : ''}"></div>`;
   }).join('');
 
-  const memberRows = members.map(m => `
+  const memberRows = members.map(m => {
+    const taskChips = m.tasks.map(t => `
+      <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--txt2);
+        background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 8px;margin:3px 5px 0 0;">
+        <span style="width:6px;height:6px;border-radius:50%;background:${reportTaskColor(t.task, dayTaskNames)};flex-shrink:0;"></span>
+        ${esc(t.task)} · ${fmtHM(t.hours)}
+      </span>`).join('');
+    return `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
       <span style="width:8px;height:8px;border-radius:50%;background:${getEmployeeColor(m.empId)};flex-shrink:0;margin-top:4px;"></span>
       <div style="flex:1;min-width:0;">
@@ -2002,8 +2283,10 @@ function buildTeamDailyRow(date, dayData, isLast) {
           <span style="font-size:12px;font-weight:700;color:var(--a1);white-space:nowrap;">${fmtHM(m.hours)}</span>
         </div>
         <div style="font-size:11px;color:var(--txt2);margin-top:2px;">${esc(m.notes || 'No notes')}</div>
+        ${taskChips ? `<div style="display:flex;flex-wrap:wrap;">${taskChips}</div>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 

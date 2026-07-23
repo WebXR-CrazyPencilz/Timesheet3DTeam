@@ -52,7 +52,8 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 16;
+const MAX_DAYS_BACK = 8;
+
 function renderDateNav() {
   const nav = $('dateNav');
   if (!nav) return;
@@ -164,7 +165,7 @@ function renderSlots() {
 // what's already loaded, no extra fetch needed. Gives the employee
 // a quick horizontal-scroll reminder of what they've been working
 // on recently before they start filling in today's entries.
-const RECENT_PROJ_PALETTE = ['#4f8ef7','#7c5cfc','#34d399','#fbbf24','#f87171','#22d3ee','#fb923c','#a78bfa','#f472b6','#84cc16'];
+const RECENT_PROJ_PALETTE = ['#4f8ef7','#7c5cfc','#34d399','#fbbf24','#5eead4','#22d3ee','#fb923c','#a78bfa','#f472b6','#84cc16'];
 
 function renderRecentProjectsSlider() {
   const worked = (ENTRIES || []).filter(e => e.status !== 'Leave' && e.project);
@@ -332,7 +333,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development','Editing','2D FloorPlan','Editing & Grading', 'Unreal Engine', 'Training R&D' ].map(t =>
+            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development', 'Editing & Greeding', 'Unreal Engine', 'Training R&D' ].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>

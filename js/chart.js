@@ -10,7 +10,7 @@ let CHART_RANGE = 'today';
 
 const CHART_PALETTE = [
   '#4f8ef7', '#7c5cfc', '#34d399', '#fbbf24',
-  '#f87171', '#22d3ee', '#fb923c', '#a78bfa',
+  '#5eead4', '#22d3ee', '#fb923c', '#a78bfa',
   '#f472b6', '#84cc16',
 ];
 

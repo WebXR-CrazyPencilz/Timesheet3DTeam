@@ -34,7 +34,7 @@ let MGR_SELECTED_MONTH = '';
 
 const MGR_PALETTE = [
   '#4f8ef7','#7c5cfc','#34d399','#fbbf24',
-  '#f87171','#22d3ee','#fb923c','#a78bfa',
+  '#5eead4','#22d3ee','#fb923c','#a78bfa',
   '#f472b6','#84cc16','#38bdf8','#4ade80',
 ];
 
