@@ -498,7 +498,10 @@ async function renderClientCards(content) {
     await ensureSalaryDataLoaded();
     const grid = $('cpClientGrid');
     if (!grid || !document.body.contains(grid)) return; // navigated away while this was loading
-    grid.innerHTML = sorted.map(c => buildClientCard(c, isManager, buildClientCostMap(c))).join('');
+    const costMaps = {};
+    await Promise.all(sorted.map(async c => { costMaps[c.id] = await buildClientCostMap(c); }));
+    if (!document.body.contains(grid)) return; // navigated away while awaiting cost data
+    grid.innerHTML = sorted.map(c => buildClientCard(c, isManager, costMaps[c.id])).join('');
     wireClientCardEvents(content);
   }
 }
@@ -533,11 +536,10 @@ function wireClientCardEvents(content) {
 // Cost for every one of this client's projects, keyed by Project ID —
 // computed once per client rather than inline per-candle, so
 // buildClientCandleChart just does a lookup.
-function buildClientCostMap(client) {
+async function buildClientCostMap(client) {
   const map = {};
-  CP_PROJECTS.filter(p => p.clientId === client.id).forEach(p => {
-    map[p.projectId] = calculateProjectCost(p);
-  });
+  const projects = CP_PROJECTS.filter(p => p.clientId === client.id);
+  await Promise.all(projects.map(async p => { map[p.projectId] = await calculateProjectCost(p); }));
   return map;
 }
 
@@ -784,7 +786,8 @@ async function renderClientProjectPerformanceInto(content, gridEl, projects, onB
     await ensureSalaryDataLoaded();
     if (!document.body.contains(gridEl)) return; // user navigated away while this was loading
     const costMap = {};
-    projects.forEach(p => { costMap[p.projectId] = calculateProjectCost(p); });
+    await Promise.all(projects.map(async p => { costMap[p.projectId] = await calculateProjectCost(p); }));
+    if (!document.body.contains(gridEl)) return; // navigated away while awaiting cost data
     gridEl.innerHTML = buildClientProjectPerfGrid(projects, isManager, costMap);
     wireProjectCards(content, gridEl, projects, onBack);
   }
@@ -2460,7 +2463,7 @@ async function renderProjectCostSection(project) {
 
   await ensureSalaryDataLoaded();
 
-  const result = calculateProjectCost(project);
+  const result = await calculateProjectCost(project);
   if (!result) {
     el.innerHTML = `<div class="chart-empty">Timesheet or Salary data isn't available yet — cost can't be calculated.</div>`;
     return;
@@ -2480,18 +2483,18 @@ async function renderProjectCostSection(project) {
               padding:6px 0;border-bottom:1px solid var(--border);">
               <span style="color:var(--txt2);">${esc(fmtCPMonthLabel(m.month))}</span>
               <span style="color:var(--txt2);">${m.hours.toFixed(1)}h</span>
-              <span style="color:var(--txt1);font-weight:700;">${fmtCPRupees(m.cost)}</span>
+              <span style="color:var(--txt1);font-weight:700;">${fmtCPConstant(m.cost)}</span>
             </div>`).join('')}
         </div>`}
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
         <div style="background:var(--surface2);border-radius:10px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Total Employee Cost</div>
-          <div style="font-size:16px;font-weight:800;color:var(--txt1);">${fmtCPRupees(result.totalCost)}</div>
+          <div style="font-size:16px;font-weight:800;color:var(--txt1);">${fmtCPConstant(result.totalCost)}</div>
         </div>
         <div style="background:var(--surface2);border-radius:10px;padding:10px 12px;">
           <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">Project Constant</div>
-          <div style="font-size:16px;font-weight:800;color:var(--txt1);">${fmtCPRupees(result.projectBudget)}</div>
+          <div style="font-size:16px;font-weight:800;color:var(--txt1);">${fmtCPConstant(result.projectBudget)}</div>
         </div>
       </div>
 
@@ -2500,7 +2503,7 @@ async function renderProjectCostSection(project) {
         border-radius:10px;padding:10px 12px;text-align:center;">
         <div style="font-size:10px;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;">${isProfit ? '📈 Profit' : '📉 Loss'}</div>
         <div style="font-size:18px;font-weight:800;color:${isProfit ? '#34d399' : '#f87171'};">
-          ${isProfit ? '+' : '-'}${fmtCPRupees(Math.abs(result.profit))}</div>
+          ${isProfit ? '+' : '-'}${fmtCPConstant(Math.abs(result.profit))}</div>
       </div>
     </div>`;
 }
@@ -2517,7 +2520,15 @@ async function ensureSalaryDataLoaded() {
   }
 }
 
-function calculateProjectCost(project) {
+// Month-name → number, for converting Historical Import's records
+// ('January'..'December' + a separate year field) into the same
+// 'YYYY-MM' keys used everywhere else in this cost calculation.
+const HIST_MONTH_NUM = {
+  January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+  July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
+};
+
+async function calculateProjectCost(project) {
   const projectEntries = CP_TIMESHEET_DATA.filter(e => e.project === project.projectName && e.status !== 'Leave');
 
   const byMonth = {}; // { 'YYYY-MM': { empId: hoursSum } }
@@ -2527,6 +2538,35 @@ function calculateProjectCost(project) {
     if (!byMonth[month]) byMonth[month] = {};
     byMonth[month][e.empId] = (byMonth[month][e.empId] || 0) + parseH(e.hours);
   });
+
+  // Pull in ALL historical hours imported for this project via
+  // Historical Import (Team Leader only). This was deliberately left
+  // disconnected from cost/profit when that feature was first built
+  // (see historical-import.js's own header comment) — wiring it in
+  // here means Project Constant vs. Employee Cost reflects the
+  // project's full lifetime, not just hours logged since the live
+  // timesheet system started. Every record for this Project ID is
+  // included, however many months back it goes — no cap, no limit.
+  try {
+    const histRecords = await sheetGET({
+      action: 'getHistoricalRecords',
+      filters: encodeURIComponent(JSON.stringify({ projectId: project.projectId })),
+    });
+    histRecords.forEach(r => {
+      const monthNum = HIST_MONTH_NUM[r.month];
+      if (!monthNum || !r.year) return;
+      const monthKey = `${r.year}-${String(monthNum).padStart(2, '0')}`;
+      if (!byMonth[monthKey]) byMonth[monthKey] = {};
+      // Historical hours are recorded as one total-hours number per
+      // employee per month (no daily entries), so this adds directly
+      // rather than needing per-entry parsing like live timesheet data.
+      byMonth[monthKey][r.employeeId] = (byMonth[monthKey][r.employeeId] || 0) + (parseFloat(r.totalHours) || 0);
+    });
+  } catch (ex) {
+    // Historical data genuinely unavailable (e.g. backend action not
+    // deployed yet) — fall back to live-timesheet-only cost rather
+    // than failing the whole calculation.
+  }
 
   const months = Object.keys(byMonth).sort();
   let totalCost = 0;
@@ -2574,6 +2614,14 @@ function fmtCPDateShort(dateStr) {
 function fmtCPRupees(n) {
   const v = parseFloat(n) || 0;
   return '₹' + v.toLocaleString('en-IN', { maximumFractionDigits: 1 });
+}
+
+// Employee Effort/Cost figures (Hours × Points) and Project Constant
+// aren't currency — they're a scoring value, not real money — so no
+// rupee symbol here, just the number.
+function fmtCPConstant(n) {
+  const v = parseFloat(n) || 0;
+  return v.toLocaleString('en-IN', { maximumFractionDigits: 1 });
 }
 
 // Updates the "X/200" counter under a notes textarea as the person
@@ -2658,12 +2706,17 @@ function renderAttendanceTab(content) {
           <button id="attendApplyRange" style="background:var(--a1);color:#fff;border:none;border-radius:6px;
             padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">Apply</button>
         </div>
+        <button id="attendExportPdf" style="background:var(--elevated);color:var(--txt1);border:1px solid var(--border-md);
+          border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          ⬇ Export PDF
+        </button>
       </div>
     </div>
     <div id="attendGridWrap"></div>
     <div style="margin-top:8px;font-size:11px;color:var(--txt2);display:flex;gap:14px;flex-wrap:wrap;">
       <span><span style="color:#34d399;font-weight:700;">Hours</span> = worked that day</span>
-      <span><span style="color:#fbbf24;font-weight:700;">🏖 Leave</span> = approved leave</span>
+      <span><span style="color:#fbbf24;font-weight:700;">🏖 Leave</span> = approved leave (full day)</span>
+      <span>Hours <span style="color:#fbbf24;">🏖</span> = worked part of the day, also had a half-day leave entry that date</span>
       <span><span style="color:#9ca3af;font-weight:700;">⚫ Holiday</span> = marked as holiday</span>
       <span><span style="color:#f87171;font-weight:700;">✕ No Entry</span> = working day, nothing logged</span>
       <span><span style="color:var(--txt2);">—</span> = weekend</span>
@@ -2702,6 +2755,8 @@ function renderAttendanceTab(content) {
     renderAttendanceGrid();
   });
 
+  $('attendExportPdf').addEventListener('click', () => exportAttendanceToPDF());
+
   renderAttendanceGrid();
 }
 
@@ -2717,6 +2772,65 @@ function applyAttendMonth(monthKey) {
   const lastDayOfMonth = toLocalDateStr(new Date(y, m, 0));
   CP_ATTEND_FROM = `${monthKey}-01`;
   CP_ATTEND_TO   = lastDayOfMonth > tod ? tod : lastDayOfMonth;
+}
+
+// Exports exactly what's currently rendered in the grid — whichever
+// mode (Last 15 Days / Month Wise / Start → End) and whatever range
+// is active — as a PDF, via the browser's own print-to-PDF rather
+// than pulling in a PDF-generation library (this app has no build
+// tooling and no external dependencies elsewhere, so this keeps that
+// consistent). Opens a plain, light-themed print view in a new tab
+// with the same table data, then triggers the browser's print
+// dialog, where "Save as PDF" is a built-in destination in every
+// major browser.
+function getAttendRangeLabel() {
+  if (CP_ATTEND_MODE === 'month') {
+    return new Date(CP_ATTEND_MONTH + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  }
+  const fromLabel = new Date(CP_ATTEND_FROM + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const toLabel   = new Date(CP_ATTEND_TO + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${fromLabel} – ${toLabel}`;
+}
+
+function exportAttendanceToPDF() {
+  const table = document.querySelector('#attendGridWrap table');
+  if (!table) { toast?.('e', 'Nothing to export', 'The grid has not finished loading yet.'); return; }
+
+  const rangeLabel = getAttendRangeLabel();
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) { toast?.('e', 'Could not open print preview', 'Your browser may have blocked the pop-up.'); return; }
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Attendance — ${esc(rangeLabel)}</title>
+      <style>
+        @page { size: landscape; margin: 10mm; }
+        * { box-sizing: border-box; }
+        body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; padding: 16px; }
+        h1 { font-size: 16px; margin: 0 0 2px; }
+        .sub { font-size: 11px; color: #555; margin-bottom: 14px; }
+        table { border-collapse: collapse; width: 100%; font-size: 9px; }
+        th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; white-space: nowrap; }
+        th { background: #f0f0f0; text-transform: uppercase; font-size: 8px; color: #333; }
+        td:first-child, th:first-child { text-align: left; font-weight: bold; position: static !important; }
+        td, th { position: static !important; background: #fff !important; color: #111 !important; }
+        th { background: #f0f0f0 !important; }
+      </style>
+    </head>
+    <body>
+      <h1>Attendance Report</h1>
+      <div class="sub">${esc(rangeLabel)} · Generated ${new Date().toLocaleString('en-IN')}</div>
+      ${table.outerHTML}
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.onload = () => printWindow.print();
+  setTimeout(() => { if (!printWindow.closed) printWindow.print(); }, 400); // fallback in case onload doesn't fire in time
 }
 
 // Distinguishes WHY a day has no worked hours — Leave and Holiday are
@@ -2740,11 +2854,19 @@ function cpGetEmpDayAttendance(empId, date) {
 
 function getEmpDayStatus(empId, date) {
   const rec = cpGetEmpDayAttendance(empId, date);
-  if (rec.hasEntry) return { kind: 'worked', ...rec };
-
   const dayEntries = CP_TIMESHEET_DATA.filter(e => e.empId === empId && e.date === date);
-  if (dayEntries.some(e => e.status === 'Leave'))   return { kind: 'leave' };
-  if (dayEntries.some(e => e.status === 'Holiday')) return { kind: 'holiday' };
+  const hasLeave   = dayEntries.some(e => e.status === 'Leave');
+  const hasHoliday = dayEntries.some(e => e.status === 'Holiday');
+
+  // A day can be BOTH worked and Leave — a half-day leave (e.g. leave
+  // in the morning, worked the afternoon). The old version checked
+  // worked-hours first and returned immediately, which silently
+  // dropped that day's Leave entry from every count entirely (it
+  // never even reached the Leave check below). hasLeave is now
+  // reported alongside 'worked' instead of being hidden by it.
+  if (rec.hasEntry) return { kind: 'worked', hasLeave, hasHoliday, ...rec };
+  if (hasLeave)   return { kind: 'leave', hasLeave: true };
+  if (hasHoliday) return { kind: 'holiday' };
   return { kind: 'not_logged' };
 }
 
@@ -2813,10 +2935,12 @@ function renderAttendanceGrid() {
                 const status = getEmpDayStatus(emp.id, d);
                 let cell, clickable = false;
                 if (status.kind === 'worked') {
-                  cell = `<span style="color:#34d399;font-weight:700;" title="In ${fmt12(status.checkIn)} → Out ${fmt12(status.checkOut)}">${fh(status.hours)}</span>`;
+                  const halfDayLeave = status.hasLeave;
+                  cell = `<span style="color:#34d399;font-weight:700;" title="In ${fmt12(status.checkIn)} → Out ${fmt12(status.checkOut)}${halfDayLeave ? ' (half-day leave also recorded this date)' : ''}">${fh(status.hours)}${halfDayLeave ? ' <span style="color:#fbbf24;" title="Half-day leave">🏖</span>' : ''}</span>`;
                   workingDays++;
                   totalHours += status.hours;
                   if (status.hours < FULL_DAY_HOURS) permissionHours += (FULL_DAY_HOURS - status.hours);
+                  if (halfDayLeave) leaveDays++;
                 } else if (status.kind === 'leave') {
                   cell = `<span style="color:#fbbf24;font-weight:700;" title="On approved leave">🏖 Leave</span>`;
                   leaveDays++;
@@ -3060,9 +3184,9 @@ Object.assign(window.ClientProjectAPI, {
   getAllClients:      () => CP_CLIENTS.slice(),
   getAllProjects:      () => CP_PROJECTS.slice(),
   getProjectById:      (projectId) => CP_PROJECTS.find(p => p.projectId === projectId) || null,
-  computeProjectCost:  (projectId) => {
+  computeProjectCost:  async (projectId) => {
     const project = CP_PROJECTS.find(p => p.projectId === projectId);
-    return project ? calculateProjectCost(project) : null;
+    return project ? await calculateProjectCost(project) : null;
   },
   getProjectTeamActivity: (projectId) => {
     const project = CP_PROJECTS.find(p => p.projectId === projectId);

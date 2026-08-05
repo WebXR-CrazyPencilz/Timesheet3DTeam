@@ -68,8 +68,8 @@ async function openEmpDetail(empId, empName) {
   // Calculate default date range: last 30 days
   const today = new Date();
   const from  = new Date(); from.setDate(today.getDate() - 29);
-  const toStr   = today.toISOString().slice(0, 10);
-  const fromStr = from.toISOString().slice(0, 10);
+  const toStr   = toLocalDateStr(today);
+  const fromStr = toLocalDateStr(from);
 
   const container = getEmpDetailContainer();
   if (!container) return;
@@ -215,12 +215,12 @@ async function openEmpDetail(empId, empName) {
       btn.classList.add('active');
       const days = parseInt(btn.dataset.days);
       const tod  = new Date();
-      $('empDetailTo').value = tod.toISOString().slice(0, 10);
+      $('empDetailTo').value = toLocalDateStr(tod);
       if (days === 0) {
         $('empDetailFrom').value = '2020-01-01'; // all time
       } else {
         const f = new Date(); f.setDate(tod.getDate() - (days - 1));
-        $('empDetailFrom').value = f.toISOString().slice(0, 10);
+        $('empDetailFrom').value = toLocalDateStr(f);
       }
       loadEmpDetail($('empDetailFrom').value, $('empDetailTo').value);
     });
@@ -418,7 +418,7 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
 
   const rows = [];
   for (let d = new Date(end); d >= renderStart; d.setDate(d.getDate() - 1)) {
-    const dateStr    = d.toISOString().slice(0, 10);
+    const dateStr    = toLocalDateStr(d);
     const dayEntries = data.entries.filter(e => e.date === dateStr);
     const worked     = dayEntries.filter(e => e.status !== 'Leave' && e.status !== 'Holiday');
     const totalHours = worked.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0);
@@ -470,7 +470,7 @@ function buildAttendanceActivityHtml(data, fromDate, toDate) {
 function shiftMonth(monthKey, delta) {
   const [y, m] = monthKey.split('-').map(Number);
   const d = new Date(y, m - 1 + delta, 1);
-  return d.toISOString().slice(0, 7);
+  return toLocalDateStr(d).slice(0, 7);
 }
 
 // Fetch (or reuse already-loaded) entries for a given month, without
@@ -769,4 +769,21 @@ function fmt12Time(t) {
   if (!t) return '--:--';
   const [h, m] = t.split(':').map(Number);
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
+// Timezone-safe 'YYYY-MM-DD' from a Date's LOCAL components. Every
+// .toISOString().slice(0,N) call in this file was silently wrong in
+// any UTC+ timezone (like IST): toISOString() always converts to
+// UTC first, and a date built as local midnight rolls back to the
+// previous day once converted — this was why the Attendance &
+// Activity timeline's topmost row was always showing the WRONG day
+// (e.g. selecting through 31 Jul would show 30 Jul's data labeled as
+// 30 Jul, with 31 Jul never appearing anywhere in the list — every
+// row was quietly shifted back one real day), and why the Monthly
+// Contribution month picker (shiftMonth) could land on the wrong
+// month too. Self-contained on purpose, same reasoning as
+// fmt12Time above — this page shouldn't depend on load order or
+// either portal's own copy of this helper.
+function toLocalDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
