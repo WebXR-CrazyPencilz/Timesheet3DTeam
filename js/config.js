@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════
 
 const CONFIG = {
-  SHEETS_URL: 'https://script.google.com/macros/s/AKfycby4-O2uAr-jgWTdXZsknZWBI-nG3OZ9lQaS-xWHe3j-cF382oURUZWopqwKWFj5cZb39w/exec',
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbxSwVC_b51ruNPQypnyY4O7OjHyh_VO6cWyRhJz1qthzclOhfeUFOCUCnCrZDvwa7VgIg/exec',
 
   DEMO_MODE: false,
 
@@ -14,7 +14,7 @@ const CONFIG = {
 
   // ── Role credentials ──────────────────────────
   MANAGER_ID: 'MGR',
-  MANAGER_PW: 'lkjhgfdsa',
+  MANAGER_PW: 'manager2026',
 
   // Two Team Leader accounts — each is its own login ID/password/
   // display name, since there are 2 people acting as Team Leader.

@@ -58,6 +58,12 @@ let CP_EMPLOYEES      = [];     // [{ id, name, team }] — forwarded by whichev
 let CP_TIMESHEET_DATA = [];     // all employee timesheet entries — forwarded by whichever portal is active
 let CP_MASTER_LOADED  = false;  // did the active portal already forward master data to us?
 
+// Auto-refresh for the open Project Detail dashboard — see
+// startProjectDetailAutoRefresh() near openProjectDetail(). Only one
+// timer is ever active at a time; opening a new project or leaving
+// the page clears whatever timer was running before.
+let CP_DETAIL_REFRESH_TIMER = null;
+
 const CP_STATUSES = ['In Progress', 'Completed', 'On Hold'];
 
 // Manager Notes / Team Leader Notes are capped at this length (both
@@ -1227,7 +1233,7 @@ async function openProjectDetail(content, projectId, opts = {}) {
     ${bodyHtml}
   `;
 
-  $('cpProjBack').addEventListener('click', goBack);
+  $('cpProjBack').addEventListener('click', () => { stopProjectDetailAutoRefresh(); goBack(); });
   content.querySelectorAll('.cp-proj-nav-chip').forEach(chip => {
     chip.addEventListener('click', () => openProjectDetail(content, chip.dataset.projectId, opts));
   });
@@ -1244,6 +1250,84 @@ async function openProjectDetail(content, projectId, opts = {}) {
   if (!isNew) renderProjectMonthlyPerfSection(project);
   if (!isNew) renderProjectTeamSection(project);
   if (!isNew && isManager) renderProjectCostSection(project);
+
+  // Auto-refresh the read-only dashboard sections every minute so
+  // Timeline/Task Breakdown/Overall Performance/Team Performance/
+  // Cost & Profit stay current if someone else logs hours while this
+  // page is open. Never touches the form fields (name/dates/notes/
+  // etc.) so it can't stomp on something the person is mid-typing.
+  stopProjectDetailAutoRefresh();
+  if (!isNew) startProjectDetailAutoRefresh(content, project.projectId);
+}
+
+// Stops whatever auto-refresh timer (if any) is currently running.
+// Safe to call even if none is active.
+function stopProjectDetailAutoRefresh() {
+  if (CP_DETAIL_REFRESH_TIMER) {
+    clearInterval(CP_DETAIL_REFRESH_TIMER);
+    CP_DETAIL_REFRESH_TIMER = null;
+  }
+}
+
+// Every 60s: re-pull project/historical/timesheet data in the
+// background and re-render only the dashboard sections (not the
+// form). Bails out cleanly — clearing itself — the moment the person
+// has navigated away from this exact project (checked via the still-
+// present #cpTimelineSection element and the project ID baked into
+// this closure), so it can never refresh a page that's no longer on
+// screen.
+function startProjectDetailAutoRefresh(content, projectId) {
+  CP_DETAIL_REFRESH_TIMER = setInterval(async () => {
+    // Page navigated away from this project (Back, or a different
+    // project opened) — stop refreshing instead of doing wasted work
+    // or, worse, rendering into a container that's now showing
+    // something else.
+    if (!document.body.contains(content) || !$('cpTimelineSection')) {
+      stopProjectDetailAutoRefresh();
+      return;
+    }
+
+    try {
+      await Promise.all([loadProjectData(), loadHistoricalData(), refreshCPTimesheetData()]);
+    } catch (err) {
+      console.warn('[client-project] Dashboard auto-refresh failed, will retry next cycle:', err.message);
+      return; // keep the timer running — a transient network hiccup shouldn't kill auto-refresh
+    }
+
+    // Re-check after the await — the person may have navigated away
+    // while the fetch was in flight.
+    if (!document.body.contains(content) || !$('cpTimelineSection')) {
+      stopProjectDetailAutoRefresh();
+      return;
+    }
+
+    const freshProject = CP_PROJECTS.find(p => p.projectId === projectId);
+    if (!freshProject) { stopProjectDetailAutoRefresh(); return; } // project deleted elsewhere in the meantime
+
+    renderProjectTimelineSection(freshProject);
+    renderProjectTaskSection(freshProject);
+    renderProjectMonthlyPerfSection(freshProject);
+    renderProjectTeamSection(freshProject);
+    if (CP_ROLE === 'manager') renderProjectCostSection(freshProject);
+  }, 60000);
+}
+
+// Re-fetches every employee's timesheet history and refreshes
+// CP_TIMESHEET_DATA in place — the same data manager.js/teamleader.js
+// hand off once via ClientProjectAPI.ingestTimesheetData() at initial
+// load, but fetched independently here so this file's own auto-
+// refresh doesn't depend on either portal shell re-running its full
+// startup sequence.
+async function refreshCPTimesheetData() {
+  if (!CP_EMPLOYEES.length) return;
+  const results = await Promise.all(
+    CP_EMPLOYEES.map(emp =>
+      apiGetAllHistory(emp.id)
+        .then(entries => entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })))
+        .catch(() => [])
+    )
+  );
+  CP_TIMESHEET_DATA = results.flat();
 }
 
 async function saveProjectFromForm(content, isNew, originalProject, onDone) {
@@ -2503,6 +2587,469 @@ function updateCPNotesCount(textareaId, counterId) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// ATTENDANCE + OLD PROJECTS — shared by Manager AND Team Leader.
+// Lives here (not in manager.js/teamleader.js) specifically so
+// there's one implementation instead of two: both portals already
+// feed this module identical data via ClientProjectAPI.ingestMasterData()
+// / ingestTimesheetData() (see the top of this file), so this reads
+// CP_EMPLOYEES / CP_TIMESHEET_DATA rather than either portal's own
+// MGR_*/TL_* globals directly, and both manager.js and teamleader.js
+// call the exact same renderAttendanceTab(content) / 
+// renderOldProjectsTab(content) from their own tab routers.
+// ══════════════════════════════════════════════════════════════
+let CP_ATTEND_MODE  = 'last15'; // 'last15' | 'custom' | 'month'
+let CP_ATTEND_FROM  = '';
+let CP_ATTEND_TO    = '';
+let CP_ATTEND_MONTH = ''; // 'YYYY-MM', used when CP_ATTEND_MODE === 'month'
+
+const CP_ATTEND_MONTH_FLOOR = '2026-07'; // earliest month offered in the dropdown
+
+function renderAttendanceTab(content) {
+  if (typeof ensureCPStyles === 'function') ensureCPStyles();
+  const tod = todayStr();
+  if (!CP_ATTEND_TO)   CP_ATTEND_TO = tod;
+  if (!CP_ATTEND_FROM) {
+    const f = new Date(); f.setDate(f.getDate() - 14);
+    CP_ATTEND_FROM = toLocalDateStr(f);
+  }
+  if (!CP_ATTEND_MONTH) CP_ATTEND_MONTH = tod.slice(0, 7) < CP_ATTEND_MONTH_FLOOR ? CP_ATTEND_MONTH_FLOOR : tod.slice(0, 7);
+
+  // Months from the floor up through the current month, newest first.
+  const monthOptions = [];
+  {
+    const [fy, fm] = CP_ATTEND_MONTH_FLOOR.split('-').map(Number);
+    const [ty, tm] = tod.slice(0, 7).split('-').map(Number);
+    const cur = new Date(ty, tm - 1, 1);
+    const floor = new Date(fy, fm - 1, 1);
+    while (cur >= floor) {
+      const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`;
+      monthOptions.push({ key, label: cur.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) });
+      cur.setMonth(cur.getMonth() - 1);
+    }
+  }
+
+  content.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.1rem;flex-wrap:wrap;gap:10px;">
+      <div>
+        <div style="font-size:16px;font-weight:700;color:var(--txt1);">🕒 Attendance</div>
+        <div style="font-size:12px;color:var(--txt2);">Daily check-in / check-out and hours per employee.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="chart-range" id="attendModeBtns">
+          <button class="rbtn${CP_ATTEND_MODE==='last15'?' active':''}" data-mode="last15">Last 15 Days</button>
+          <button class="rbtn${CP_ATTEND_MODE==='month'?' active':''}" data-mode="month">Month Wise</button>
+          <button class="rbtn${CP_ATTEND_MODE==='custom'?' active':''}" data-mode="custom">Start → End</button>
+        </div>
+        <div id="attendMonthPicker" style="display:${CP_ATTEND_MODE==='month'?'flex':'none'};align-items:center;gap:6px;">
+          <select id="attendMonthSelect" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+            color:var(--txt1);font-size:12px;padding:6px 8px;cursor:pointer;">
+            ${monthOptions.map(m => `<option value="${m.key}" ${m.key === CP_ATTEND_MONTH ? 'selected' : ''}>${m.label}</option>`).join('')}
+          </select>
+        </div>
+        <div id="attendCustomRange" style="display:${CP_ATTEND_MODE==='custom'?'flex':'none'};align-items:center;gap:6px;">
+          <input type="date" id="attendFrom" value="${CP_ATTEND_FROM}" max="${tod}"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+            color:var(--txt1);font-size:12px;padding:5px 8px;cursor:pointer;"/>
+          <span style="color:var(--txt2);font-size:11px;">to</span>
+          <input type="date" id="attendTo" value="${CP_ATTEND_TO}" max="${tod}"
+            style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+            color:var(--txt1);font-size:12px;padding:5px 8px;cursor:pointer;"/>
+          <button id="attendApplyRange" style="background:var(--a1);color:#fff;border:none;border-radius:6px;
+            padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">Apply</button>
+        </div>
+      </div>
+    </div>
+    <div id="attendGridWrap"></div>
+    <div style="margin-top:8px;font-size:11px;color:var(--txt2);display:flex;gap:14px;flex-wrap:wrap;">
+      <span><span style="color:#34d399;font-weight:700;">Hours</span> = worked that day</span>
+      <span><span style="color:#fbbf24;font-weight:700;">🏖 Leave</span> = approved leave</span>
+      <span><span style="color:#9ca3af;font-weight:700;">⚫ Holiday</span> = marked as holiday</span>
+      <span><span style="color:#f87171;font-weight:700;">✕ No Entry</span> = working day, nothing logged</span>
+      <span><span style="color:var(--txt2);">—</span> = weekend</span>
+      <span><span style="color:#a78bfa;font-weight:700;">Permission Hrs</span> = shortfall below a ${9}h full day, on days actually worked</span>
+    </div>
+  `;
+
+  $('attendModeBtns').addEventListener('click', e => {
+    const btn = e.target.closest('.rbtn');
+    if (!btn) return;
+    CP_ATTEND_MODE = btn.dataset.mode;
+    $('attendModeBtns').querySelectorAll('.rbtn').forEach(b => b.classList.toggle('active', b === btn));
+    $('attendCustomRange').style.display = CP_ATTEND_MODE === 'custom' ? 'flex' : 'none';
+    $('attendMonthPicker').style.display = CP_ATTEND_MODE === 'month'  ? 'flex' : 'none';
+    if (CP_ATTEND_MODE === 'last15') {
+      CP_ATTEND_TO = todayStr();
+      const f = new Date(); f.setDate(f.getDate() - 14);
+      CP_ATTEND_FROM = toLocalDateStr(f);
+    } else if (CP_ATTEND_MODE === 'month') {
+      applyAttendMonth(CP_ATTEND_MONTH);
+    }
+    renderAttendanceGrid();
+  });
+
+  $('attendMonthSelect').addEventListener('change', e => {
+    applyAttendMonth(e.target.value);
+    renderAttendanceGrid();
+  });
+
+  $('attendApplyRange').addEventListener('click', () => {
+    const from = $('attendFrom').value;
+    const to   = $('attendTo').value;
+    if (!from || !to || from > to) { toast?.('e', 'Invalid range', 'Pick a valid Start and End date.'); return; }
+    CP_ATTEND_FROM = from;
+    CP_ATTEND_TO   = to;
+    renderAttendanceGrid();
+  });
+
+  renderAttendanceGrid();
+}
+
+// Sets the From/To range to the full calendar month for the given
+// 'YYYY-MM' key — capped at today if that month is the current one,
+// so it doesn't extend into the future (renderAttendanceGrid also
+// caps this independently, but keeping CP_ATTEND_TO itself sane
+// avoids the picker's own max attribute clamping oddly).
+function applyAttendMonth(monthKey) {
+  CP_ATTEND_MONTH = monthKey;
+  const [y, m] = monthKey.split('-').map(Number);
+  const tod = todayStr();
+  const lastDayOfMonth = toLocalDateStr(new Date(y, m, 0));
+  CP_ATTEND_FROM = `${monthKey}-01`;
+  CP_ATTEND_TO   = lastDayOfMonth > tod ? tod : lastDayOfMonth;
+}
+
+// Distinguishes WHY a day has no worked hours — Leave and Holiday are
+// legitimate, approved statuses and shouldn't look like a missed day.
+// getEmpDayAttendance() only reports worked hours/check-in-out, so
+// this checks CP_TIMESHEET_DATA directly for the day's status, same filter
+// pattern already used everywhere else in this file.
+// Check-in / check-out / worked-duration for one employee on one day,
+// from CP_TIMESHEET_DATA (fed by whichever portal — Manager or Team
+// Leader — is currently active). Reuses isWorkedEntry/parseH, which
+// are portal-agnostic globals already defined in manager.js/
+// teamleader.js and loaded on every page regardless of portal.
+function cpGetEmpDayAttendance(empId, date) {
+  const entries = CP_TIMESHEET_DATA.filter(e => e.empId === empId && e.date === date).filter(isWorkedEntry);
+  if (!entries.length) return { hasEntry: false, checkIn: null, checkOut: null, hours: 0 };
+  const timesIn  = entries.map(e => e.timeIn).filter(Boolean).sort();
+  const timesOut = entries.map(e => e.timeOut).filter(Boolean).sort();
+  const hours    = entries.reduce((s, e) => s + parseH(e.hours), 0);
+  return { hasEntry: true, checkIn: timesIn[0] || null, checkOut: timesOut[timesOut.length - 1] || null, hours };
+}
+
+function getEmpDayStatus(empId, date) {
+  const rec = cpGetEmpDayAttendance(empId, date);
+  if (rec.hasEntry) return { kind: 'worked', ...rec };
+
+  const dayEntries = CP_TIMESHEET_DATA.filter(e => e.empId === empId && e.date === date);
+  if (dayEntries.some(e => e.status === 'Leave'))   return { kind: 'leave' };
+  if (dayEntries.some(e => e.status === 'Holiday')) return { kind: 'holiday' };
+  return { kind: 'not_logged' };
+}
+
+function renderAttendanceGrid() {
+  const wrap = $('attendGridWrap');
+  if (!wrap) return;
+
+  const tod      = todayStr();
+  const cappedTo = CP_ATTEND_TO > tod ? tod : CP_ATTEND_TO;
+  const CAP = 60; // keep the grid usable even for a very wide custom range
+  const startDate   = new Date(CP_ATTEND_FROM + 'T00:00:00');
+  const endDate     = new Date(cappedTo + 'T00:00:00');
+  const totalDaysInRange = Math.max(1, Math.round((endDate - startDate) / 86400000) + 1);
+  const renderStart = totalDaysInRange > CAP ? new Date(endDate.getTime() - (CAP - 1) * 86400000) : startDate;
+
+  const days = [];
+  for (let d = new Date(renderStart); d <= endDate; d.setDate(d.getDate() + 1)) {
+    days.push(toLocalDateStr(d));
+  }
+
+  const truncNote = totalDaysInRange > CAP
+    ? `<div style="font-size:10px;color:var(--txt2);margin-bottom:8px;">Showing most recent ${CAP} of ${totalDaysInRange} days in range</div>`
+    : '';
+
+  wrap.innerHTML = `
+    ${truncNote}
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow-x:auto;">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:9px 12px;background:var(--surface2);color:var(--txt2);
+              font-size:10.5px;text-transform:uppercase;white-space:nowrap;position:sticky;left:0;z-index:1;">Employee</th>
+            ${days.map(d => `<th style="text-align:center;padding:9px 8px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;white-space:nowrap;">${new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</th>`).join('')}
+            <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;border-left:2px solid var(--border);
+              position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Leave<br/>Days</th>
+            <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;
+              position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Permission<br/>Hrs</th>
+            <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;
+              position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Working<br/>Days</th>
+            <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;
+              position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Total<br/>Hours</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(() => {
+            // Inactive employees are excluded entirely here — their
+            // past hours still flow into cost calculations elsewhere
+            // (client-project.js reads CP_TIMESHEET_DATA regardless of this
+            // filter), this only affects what shows in this grid.
+            const activeEmployees = (CP_EMPLOYEES || []).filter(emp => emp.active !== false);
+            if (!activeEmployees.length) {
+              return `<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--txt2);">No employees found.</td></tr>`;
+            }
+            const FULL_DAY_HOURS = 9; // baseline used for "Permission Hours" — adjust if your actual full working day differs
+            return activeEmployees.map(emp => {
+              let leaveDays = 0, workingDays = 0, totalHours = 0, permissionHours = 0;
+
+              const dayCellsHtml = days.map(d => {
+                const dow = new Date(d + 'T00:00:00').getDay();
+                const isWeekend = dow === 0 || dow === 6;
+                const status = getEmpDayStatus(emp.id, d);
+                let cell, clickable = false;
+                if (status.kind === 'worked') {
+                  cell = `<span style="color:#34d399;font-weight:700;" title="In ${fmt12(status.checkIn)} → Out ${fmt12(status.checkOut)}">${fh(status.hours)}</span>`;
+                  workingDays++;
+                  totalHours += status.hours;
+                  if (status.hours < FULL_DAY_HOURS) permissionHours += (FULL_DAY_HOURS - status.hours);
+                } else if (status.kind === 'leave') {
+                  cell = `<span style="color:#fbbf24;font-weight:700;" title="On approved leave">🏖 Leave</span>`;
+                  leaveDays++;
+                } else if (status.kind === 'holiday') {
+                  cell = `<span style="color:#9ca3af;font-weight:700;" title="Marked as holiday">⚫ Holiday</span>`;
+                } else if (isWeekend) {
+                  cell = `<span style="color:var(--txt2);">—</span>`;
+                } else if (d > tod) {
+                  cell = `<span style="color:var(--txt2);">·</span>`;
+                } else {
+                  cell = `<span style="color:#f87171;font-weight:700;">✕ No Entry</span>`;
+                  clickable = true;
+                }
+                return clickable
+                  ? `<td class="attend-no-entry-cell" data-emp-id="${esc(emp.id)}" data-emp-name="${esc(emp.name)}" data-date="${d}"
+                      style="padding:8px;text-align:center;white-space:nowrap;cursor:pointer;" title="Click to Force Entry or Force Leave">${cell}</td>`
+                  : `<td style="padding:8px;text-align:center;white-space:nowrap;">${cell}</td>`;
+              }).join('');
+
+              return `
+              <tr style="border-top:1px solid var(--border);">
+                <td style="padding:8px 12px;color:var(--txt1);font-weight:600;white-space:nowrap;
+                  position:sticky;left:0;background:var(--surface1);">
+                  ${esc(emp.name)}<br/><span style="font-size:10px;color:var(--txt2);font-weight:500;">${esc(emp.id)}</span>
+                </td>
+                ${dayCellsHtml}
+                <td style="padding:8px 6px;text-align:center;color:${leaveDays > 0 ? '#fbbf24' : 'var(--txt2)'};font-weight:700;
+                  border-left:2px solid var(--border);position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${leaveDays}</td>
+                <td style="padding:8px 6px;text-align:center;color:${permissionHours > 0 ? '#a78bfa' : 'var(--txt2)'};font-weight:700;
+                  position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${permissionHours > 0 ? fh(permissionHours) : '—'}</td>
+                <td style="padding:8px 6px;text-align:center;color:var(--txt1);font-weight:700;
+                  position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${workingDays}</td>
+                <td style="padding:8px 6px;text-align:center;color:var(--a1);font-weight:700;
+                  position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${fh(totalHours)}</td>
+              </tr>`;
+            }).join('');
+          })()}
+        </tbody>
+      </table>
+    </div>`;
+
+  wrap.querySelectorAll('.attend-no-entry-cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      openAttendanceCellMenu(cell, cell.dataset.empId, cell.dataset.empName, cell.dataset.date);
+    });
+  });
+}
+
+// ── FORCE ENTRY / FORCE LEAVE FROM THE ATTENDANCE GRID ────────────
+// A small action menu on any "✕ No Entry" cell. Force Entry reuses
+// openForceEntry() from forceentry.js exactly as-is (it's already
+// portal/container-aware). Force Leave can't reuse emp-detail.js's
+// openResolutionModal() directly — its submit handler hardcodes a
+// refresh call to the Employee Detail page's own DOM elements, which
+// don't exist here — so this builds its own small modal, but still
+// reuses the actual save logic (buildManagerEntry + apiSaveSlot) from
+// emp-detail.js rather than duplicating it.
+function closeAttendanceCellMenu() {
+  document.getElementById('attendCellMenu')?.remove();
+  document.removeEventListener('click', closeAttendanceCellMenuOnOutsideClick, true);
+}
+
+function closeAttendanceCellMenuOnOutsideClick(e) {
+  const menu = document.getElementById('attendCellMenu');
+  if (menu && !menu.contains(e.target)) closeAttendanceCellMenu();
+}
+
+function openAttendanceCellMenu(cellEl, empId, empName, date) {
+  closeAttendanceCellMenu();
+
+  const rect = cellEl.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.id = 'attendCellMenu';
+  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;z-index:10000;
+    background:var(--surface1);border:1px solid var(--border-md);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:150px;`;
+  menu.innerHTML = `
+    <button id="attendMenuForceEntry" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">⚡ Force Entry</button>
+    <button id="attendMenuForceLeave" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">🟠 Force Leave</button>
+  `;
+  document.body.appendChild(menu);
+  menu.querySelectorAll('button').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'var(--surface2)');
+    b.addEventListener('mouseleave', () => b.style.background = 'none');
+  });
+
+  menu.querySelector('#attendMenuForceEntry').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    if (typeof openForceEntry !== 'function') { toast?.('e', 'Force Entry module not loaded'); return; }
+    // Derive which portal's containers to use from the cell that was
+    // clicked, rather than hardcoding Manager's — this same module is
+    // shared with Team Leader's Attendance tab too.
+    const portalRoot = cellEl.closest('#mgrApp, #tlApp');
+    const portalId   = portalRoot ? portalRoot.id : 'mgrApp';
+    const tabContent = portalRoot ? portalRoot.querySelector('#mgrTabContent, #tlTabContent') : $('mgrTabContent');
+    openForceEntry(empId, empName, date, () => renderAttendanceTab(tabContent), portalId);
+  });
+
+  menu.querySelector('#attendMenuForceLeave').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    openAttendanceForceLeaveModal(empId, empName, date);
+  });
+
+  // Defer binding the outside-click listener one tick so the click
+  // that opened this menu doesn't immediately close it again.
+  setTimeout(() => document.addEventListener('click', closeAttendanceCellMenuOnOutsideClick, true), 0);
+}
+
+function openAttendanceForceLeaveModal(empId, empName, date) {
+  const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9999;`;
+  overlay.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border-md);border-radius:14px;padding:1.25rem;width:360px;max-width:92vw;">
+      <div style="font-weight:700;font-size:15px;color:var(--txt1);margin-bottom:2px;">🟠 Apply Force Leave</div>
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:10px;">${esc(empName)} · ${dateLabel}</div>
+      <label style="font-size:11px;color:var(--txt2);font-weight:600;display:block;margin-bottom:4px;">
+        Notes <span style="color:#f87171;">(required)</span>
+      </label>
+      <textarea id="attendForceLeaveNotes" placeholder="Reason for this manual action…" style="width:100%;min-height:64px;
+        background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--txt1);
+        font-size:12.5px;padding:8px 10px;box-sizing:border-box;font-family:inherit;resize:vertical;"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button id="attendForceLeaveCancel" style="background:none;border:1px solid var(--border-md);
+          color:var(--txt2);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;">Cancel</button>
+        <button id="attendForceLeaveSubmit" style="background:var(--a1);border:none;
+          color:#fff;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;">Submit</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#attendForceLeaveCancel').addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#attendForceLeaveSubmit').addEventListener('click', async () => {
+    const notes = overlay.querySelector('#attendForceLeaveNotes').value.trim();
+    if (!notes) { overlay.querySelector('#attendForceLeaveNotes').style.borderColor = '#f87171'; return; }
+
+    if (typeof buildManagerEntry !== 'function' || typeof apiSaveSlot !== 'function') {
+      toast?.('e', 'Employee Detail module not loaded');
+      return;
+    }
+
+    const submitBtn = overlay.querySelector('#attendForceLeaveSubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+
+    try {
+      const fields = { slot: 'extended', client: 'Leave', clientId: '', project: 'Leave', projectId: '', task: 'Leave', hours: 0, status: 'Leave', tag: 'FORCE_LEAVE' };
+      const entry  = buildManagerEntry(empId, empName, date, fields, notes);
+      await apiSaveSlot(entry);
+
+      // Reflect it locally so the grid updates immediately without a
+      // full reload — same append-to-CP_TIMESHEET_DATA pattern used elsewhere.
+      CP_TIMESHEET_DATA.push({ ...entry, empId, empName, status: 'Leave', date, hours: '0h' });
+
+      toast?.('s', 'Force Leave recorded', `${dateLabel} for ${empName}`);
+      overlay.remove();
+      renderAttendanceGrid();
+    } catch(err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Submit';
+      toast?.('e', 'Failed to save', err.message);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════
+// OLD PROJECTS TAB — read-only Manager view of the registers Team
+// Leaders enter via historical-import.js. Reuses the EXACT same
+// backend action (getHistoricalProjectsSummary) that file already
+// calls for its own landing-screen list — no new backend endpoint,
+// no duplicated summary logic. Manager can view but not edit/resume
+// a register here (that stays Team-Leader-only, in Historical Import).
+// ══════════════════════════════════════════════════
+async function renderOldProjectsTab(content) {
+  content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading historical projects…</span></div>`;
+
+  let projects;
+  try {
+    projects = await sheetGET({ action: 'getHistoricalProjectsSummary' });
+  } catch(err) {
+    content.innerHTML = `<div class="slot-error">Failed to load historical projects: ${esc(err.message)}</div>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div style="margin-bottom:1.1rem;">
+      <div style="font-size:16px;font-weight:700;color:var(--txt1);">📜 OLD Projects</div>
+      <div style="font-size:12px;color:var(--txt2);">
+        Legacy projects entered by Team Leaders via Historical Import — total hours per employee per month only, no daily entries. View only here.
+      </div>
+    </div>
+    ${!projects.length
+      ? `<div class="chart-empty">No historical registers have been entered yet.</div>`
+      : `<div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+            <thead>
+              <tr>
+                ${['Client → Project', 'Months', 'Employees', 'Total Hours', 'Status'].map(h =>
+                  `<th style="text-align:${['Months','Employees','Total Hours'].includes(h) ? 'right' : 'left'};padding:9px 12px;
+                    background:var(--surface2);color:var(--txt2);font-size:10.5px;text-transform:uppercase;
+                    letter-spacing:.04em;white-space:nowrap;">${h}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${projects.map(p => `
+                <tr style="border-top:1px solid var(--border);">
+                  <td style="padding:9px 12px;color:var(--txt1);font-weight:600;white-space:nowrap;">${esc(p.clientName)} → ${esc(p.projectName)}</td>
+                  <td style="padding:9px 12px;text-align:right;color:var(--txt1);">${p.monthCount}</td>
+                  <td style="padding:9px 12px;text-align:right;color:var(--txt1);">${p.employeeCount}</td>
+                  <td style="padding:9px 12px;text-align:right;color:var(--a1);font-weight:700;">${fmtOldProjHours(p.totalHours)}</td>
+                  <td style="padding:9px 12px;white-space:nowrap;">
+                    ${p.isFinal
+                      ? `<span style="background:rgba(52,211,153,.12);color:#34d399;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700;">Final</span>`
+                      : `<span style="background:rgba(251,191,36,.12);color:#fbbf24;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:700;">Draft</span>`}
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`}
+  `;
+}
+
+function fmtOldProjHours(h) {
+  const n = parseFloat(h) || 0;
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 1 }) + 'h';
+}
+
 // FUTURE-MODULE HOOK — read-only surface for later modules (profit
 // dashboard, client revenue, resource allocation, invoicing, billing,
 // payment tracking, AI reports) to plug into without needing to know
