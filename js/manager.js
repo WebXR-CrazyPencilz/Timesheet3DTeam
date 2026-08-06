@@ -97,6 +97,7 @@ function renderManagerPortal() {
         { id:'employees', icon:'👥', label:'Employees' },
         { id:'attendance',icon:'🕒', label:'Attendance' },
         { id:'oldprojects',icon:'📜', label:'OLD Projects' },
+        { id:'timeline',   icon:'📊', label:'Project Timeline' },
         { id:'salary',    icon:'💼', label:'Salary'    },
       ].map(t => `
         <button class="mgr-tab${MGR_TAB===t.id?' active':''}" data-tab="${t.id}" style="
@@ -151,6 +152,12 @@ function renderMgrTab() {
   if (MGR_TAB === 'oldprojects') {
     if (typeof renderOldProjectsTab === 'function') renderOldProjectsTab(content);
     else content.innerHTML = `<div class="chart-empty">OLD Projects module (client-project.js) is not loaded.</div>`;
+    return;
+  }
+
+  if (MGR_TAB === 'timeline') {
+    if (typeof initGantt === 'function') initGantt(content);
+    else content.innerHTML = `<div class="chart-empty">Project Timeline module (gantt.js) is not loaded.</div>`;
     return;
   }
 
