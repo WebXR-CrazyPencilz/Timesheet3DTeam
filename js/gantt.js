@@ -204,11 +204,25 @@ async function loadProjects() {
       // corrections Sep–Nov) — the bar should only fill months that
       // genuinely have activity, not every month between the first
       // and last regardless of what happened in between.
+      //
+      // monthlyHours extends this SAME scan (not a second pass) to
+      // also total actual hours per month — needed for Views
+      // Delivered below (effort-weighted, never equal/calendar
+      // distribution). activeMonths itself is unchanged.
       const activeMonths = new Set();
-      entries.forEach(e => { if (e.date) activeMonths.add(e.date.slice(0, 7)); });
+      const monthlyHours = {}; // { 'YYYY-MM': hours }
+      entries.forEach(e => {
+        if (!e.date) return;
+        const key = e.date.slice(0, 7);
+        activeMonths.add(key);
+        monthlyHours[key] = (monthlyHours[key] || 0) + parseH(e.hours);
+      });
       histRecords.forEach(r => {
         const mn = GANTT_HIST_MONTH_NUM[r.month];
-        if (mn && r.year) activeMonths.add(`${r.year}-${String(mn).padStart(2, '0')}`);
+        if (!mn || !r.year) return;
+        const key = `${r.year}-${String(mn).padStart(2, '0')}`;
+        activeMonths.add(key);
+        monthlyHours[key] = (monthlyHours[key] || 0) + (parseFloat(r.totalHours) || 0);
       });
 
       const liveHours = entries.reduce((s, e) => s + parseH(e.hours), 0);
@@ -229,11 +243,28 @@ async function loadProjects() {
       return {
         ...p,
         clientName: clientNameById[p.clientId] || p.clientId || '—',
-        startDate, lastActivity, totalHours, employeeCount, activeMonths,
+        startDate, lastActivity, totalHours, employeeCount, activeMonths, monthlyHours,
         barColor, statusLabel: statusMeta.label, statusDotColor: statusMeta.bg, statusDot: statusMeta.dot,
       };
     })
     .filter(Boolean);
+}
+
+// ── VIEWS DELIVERED (effort-weighted, never equal/calendar split) ──
+// Month Weight = Month Hours / Total Project Hours
+// Views Delivered = Completed Views × Month Weight
+// Reuses p.totalHours and p.monthlyHours (both already computed by
+// loadProjects() above) and p.completedViews (already a field on the
+// project record from Client-Project.js's Project Editor — nothing
+// new to load). No new calculation engine: this is one formula
+// applied to numbers that already exist.
+function getMonthlyViewsDelivered(p, monthKey) {
+  const hours = p.monthlyHours?.[monthKey] || 0;
+  const totalHours = p.totalHours || 0;
+  const completedViews = parseFloat(p.completedViews) || 0;
+  if (hours <= 0 || totalHours <= 0 || completedViews <= 0) return { hours, weight: 0, views: 0 };
+  const weight = hours / totalHours;
+  return { hours, weight, views: completedViews * weight };
 }
 
 // ── TIMELINE RANGE ────────────────────────────────────────────
@@ -339,6 +370,7 @@ function renderGanttShell(content) {
 
     <div style="margin-top:8px;font-size:11px;color:var(--txt2);display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
       <span>🎨 <b style="color:var(--txt1);">Project Colors</b> — each bar color represents an individual project (hover a project for full details)</span>
+      <span>📐 Each month block shows effort-weighted <b style="color:var(--txt1);">Views Delivered</b> — hover a block for the full monthly breakdown</span>
       <span>🟢 Active · 🔵 Completed · 🟠 On Hold</span>
       <span><span style="display:inline-block;width:2px;height:9px;background:#f87171;margin-right:5px;"></span>Today</span>
     </div>
@@ -529,6 +561,10 @@ function buildGanttRow(p) {
 function drawProjectBars(projects) {
   const rows = document.querySelectorAll('#ganttRows .gantt-row');
   const GAP = 3; // px between adjacent month segments
+  // Minimum segment width for the two-line Hours/Views label to
+  // actually be readable — below this, the segment still renders
+  // (real activity, real gap behavior unchanged), just without text.
+  const MIN_WIDTH_FOR_LABEL = 30;
 
   rows.forEach(row => {
     const projectId = row.dataset.projectId;
@@ -551,11 +587,20 @@ function drawProjectBars(projects) {
       const left  = i * GANTT_MONTH_WIDTH + GAP / 2;
       const width = Math.max(GANTT_MONTH_WIDTH - GAP, 4);
 
+      const { hours, views } = getMonthlyViewsDelivered(p, monthKey);
+      const showLabel = width >= MIN_WIDTH_FOR_LABEL && hours > 0;
+
       const seg = document.createElement('div');
       seg.className = 'gantt-bar';
       seg.dataset.projectId = p.projectId;
+      seg.dataset.monthKey = monthKey;
       seg.style.cssText = `position:absolute;left:${left}px;top:8px;width:${width}px;height:${GANTT_ROW_HEIGHT - 16}px;
-        background:${p.barColor};--gantt-glow:${p.barColor};`;
+        background:${p.barColor};--gantt-glow:${p.barColor};display:flex;flex-direction:column;align-items:center;
+        justify-content:center;overflow:hidden;line-height:1.1;`;
+      if (showLabel) {
+        seg.innerHTML = `
+          <span style="font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);white-space:nowrap;pointer-events:none;">${views.toFixed(1)} Views</span>`;
+      }
       track.appendChild(seg);
     }
   });
@@ -583,7 +628,45 @@ function wireGanttRows(projects) {
     row.addEventListener('mousemove', e => positionGanttTooltip(e));
     row.addEventListener('mouseleave', hideGanttTooltip);
     row.addEventListener('click', () => openGanttProjectDetail(p.projectId));
+
+    // Per-segment hover shows the monthly Hours/Views Delivered
+    // breakdown instead of the row's aggregate tooltip — swapped in
+    // on entering a specific month's block, and the aggregate
+    // tooltip resumes on leaving it (still within the row). Row-level
+    // click still opens Project Detail regardless of which segment
+    // was clicked — unchanged.
+    row.querySelectorAll('.gantt-bar').forEach(seg => {
+      seg.addEventListener('mouseenter', e => { e.stopPropagation(); showGanttSegmentTooltip(e, p, seg.dataset.monthKey); });
+      seg.addEventListener('mousemove', e => { e.stopPropagation(); positionGanttTooltip(e); });
+      seg.addEventListener('mouseleave', e => { e.stopPropagation(); showGanttTooltip(e, p); });
+    });
   });
+}
+
+// Month-specific tooltip — Hours Worked, Views Delivered, Contribution
+// %, per the effort-weighted formula above. Reuses the same
+// #ganttTooltip element/positioning/dismiss functions as the
+// aggregate tooltip (showGanttTooltip/positionGanttTooltip/
+// hideGanttTooltip) so both behave identically, just with different
+// content — no separate tooltip system introduced.
+function showGanttSegmentTooltip(evt, p, monthKey) {
+  hideGanttTooltip();
+  const { hours, weight, views } = getMonthlyViewsDelivered(p, monthKey);
+  const monthLabel = new Date(monthKey + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  const tip = document.createElement('div');
+  tip.id = 'ganttTooltip';
+  tip.style.cssText = `position:fixed;z-index:10001;background:var(--surface1);border:1px solid var(--border-md);
+    border-radius:10px;padding:10px 12px;font-size:11.5px;color:var(--txt1);box-shadow:0 8px 24px rgba(0,0,0,.4);
+    max-width:260px;pointer-events:none;`;
+  tip.innerHTML = `
+    <div style="font-weight:700;margin-bottom:4px;">${esc(p.projectName)}</div>
+    <div style="color:var(--txt2);margin-bottom:6px;">${esc(monthLabel)}</div>
+    <div>Views Delivered: <b>${views.toFixed(1)}</b></div>
+    <div>Contribution: <b>${(weight * 100).toFixed(1)}%</b></div>
+  `;
+  document.body.appendChild(tip);
+  positionGanttTooltip(evt);
 }
 
 async function showGanttTooltip(evt, p) {

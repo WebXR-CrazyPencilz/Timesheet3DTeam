@@ -2547,26 +2547,31 @@ async function calculateProjectCost(project) {
   // project's full lifetime, not just hours logged since the live
   // timesheet system started. Every record for this Project ID is
   // included, however many months back it goes — no cap, no limit.
-  try {
-    const histRecords = await sheetGET({
-      action: 'getHistoricalRecords',
-      filters: encodeURIComponent(JSON.stringify({ projectId: project.projectId })),
-    });
-    histRecords.forEach(r => {
-      const monthNum = HIST_MONTH_NUM[r.month];
-      if (!monthNum || !r.year) return;
-      const monthKey = `${r.year}-${String(monthNum).padStart(2, '0')}`;
-      if (!byMonth[monthKey]) byMonth[monthKey] = {};
-      // Historical hours are recorded as one total-hours number per
-      // employee per month (no daily entries), so this adds directly
-      // rather than needing per-entry parsing like live timesheet data.
-      byMonth[monthKey][r.employeeId] = (byMonth[monthKey][r.employeeId] || 0) + (parseFloat(r.totalHours) || 0);
-    });
-  } catch (ex) {
-    // Historical data genuinely unavailable (e.g. backend action not
-    // deployed yet) — fall back to live-timesheet-only cost rather
-    // than failing the whole calculation.
-  }
+  //
+  // Reuses CP_HISTORICAL_DATA (the single unfiltered fetch already
+  // made by loadHistoricalData() before any caller of this function
+  // runs — see renderClientTab/renderProjectTab) instead of calling
+  // sheetGET itself. calculateProjectCost() is invoked once PER
+  // PROJECT inside Promise.all fan-outs (buildClientCostMap,
+  // renderClientProjectPerformanceInto) — if each call made its own
+  // network request, opening the Client tab with N projects fired N
+  // simultaneous getHistoricalRecords calls at the backend, which is
+  // what was causing the timeout/retry storm. Filtering the
+  // already-loaded array in memory is instant and makes zero network
+  // calls, matching the "reuse existing data flow" rule everywhere
+  // else in this file.
+  const histRecords = (typeof CP_HISTORICAL_DATA !== 'undefined' ? CP_HISTORICAL_DATA : [])
+    .filter(r => r.projectId === project.projectId);
+  histRecords.forEach(r => {
+    const monthNum = HIST_MONTH_NUM[r.month];
+    if (!monthNum || !r.year) return;
+    const monthKey = `${r.year}-${String(monthNum).padStart(2, '0')}`;
+    if (!byMonth[monthKey]) byMonth[monthKey] = {};
+    // Historical hours are recorded as one total-hours number per
+    // employee per month (no daily entries), so this adds directly
+    // rather than needing per-entry parsing like live timesheet data.
+    byMonth[monthKey][r.employeeId] = (byMonth[monthKey][r.employeeId] || 0) + (parseFloat(r.totalHours) || 0);
+  });
 
   const months = Object.keys(byMonth).sort();
   let totalCost = 0;
