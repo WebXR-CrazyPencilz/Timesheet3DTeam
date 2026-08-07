@@ -644,8 +644,6 @@ tr:hover .del-btn{opacity:1}
         font-size:13px;font-weight:600;color:var(--a1);border-bottom:2px solid var(--a1);margin-bottom:-1px;transition:all .2s;">🕐 Timesheet</button>
       <button class="emp-tab-btn" data-emp-tab="projects" style="padding:9px 16px;border:none;background:none;cursor:pointer;
         font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .2s;">📁 My Projects</button>
-      <button class="emp-tab-btn" data-emp-tab="attendance" style="padding:9px 16px;border:none;background:none;cursor:pointer;
-        font-size:13px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .2s;">📆 My Attendance</button>
     </div>
 
     <div id="empTabTimesheet">
@@ -737,19 +735,6 @@ tr:hover .del-btn{opacity:1}
         </div>
       </div>
       <div id="myProjCardsContainer">
-        <div class="slot-loading"><div class="slot-spinner"></div><span>Loading…</span></div>
-      </div>
-    </div>
-
-    <div id="empTabAttendance" style="display:none;">
-      <div class="phdr">
-        <div>
-          <h1 class="ptitle">My Attendance</h1>
-          <p class="psub">Your daily check-in, check-out, and worked hours at a glance.</p>
-        </div>
-      </div>
-      <div id="myAttendRangeBar" style="display:flex;gap:8px;margin-bottom:1rem;"></div>
-      <div id="myAttendGridWrap">
         <div class="slot-loading"><div class="slot-spinner"></div><span>Loading…</span></div>
       </div>
     </div>
@@ -870,6 +855,7 @@ tr:hover .del-btn{opacity:1}
 <script src="js/Client-Project.js"></script>
 <script src="js/historical-import.js"></script>
 <script src="js/gantt.js"></script>
+<script src="js/dashboard.js"></script>
 <script>
   // ── Boot ──────────────────────────────────────
   setTheme(getTheme());

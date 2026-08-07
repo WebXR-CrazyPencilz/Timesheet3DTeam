@@ -348,10 +348,15 @@ function getFilteredGanttProjects() {
 // ── SHELL: filters + scroll area ──────────────────────────────
 function renderGanttShell(content) {
   content.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem;flex-wrap:wrap;gap:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;flex-wrap:wrap;gap:10px;">
       <div>
         <div style="font-size:16px;font-weight:700;color:var(--txt1);">📊 Project Timeline</div>
         <div style="font-size:12px;color:var(--txt2);">When each project existed and was active — click a bar for full details.</div>
+      </div>
+      <div id="ganttTotalViewsBadge" style="background:var(--elevated);border:1px solid var(--border-md);border-radius:8px;
+        padding:6px 14px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;">Total Number of Views</div>
+        <div style="font-size:16px;font-weight:800;color:var(--a1);">0</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         <button id="ganttZoomOut" class="cp-nav-btn" title="Zoom out">−</button>
@@ -400,28 +405,22 @@ function renderFilters() {
     .filter(e => GANTT_ALL_ENTRIES.some(en => en.empId === e.id && en.status !== 'Leave'));
 
   return `
-    <div class="cp-form-grid" style="max-width:900px;margin-bottom:.4rem;grid-template-columns:repeat(3,1fr);">
-      <div class="cp-form-field" style="margin-bottom:0;">
-        <label class="cp-flabel">Client</label>
-        <select class="cp-finput" id="ganttFilterClient">
-          <option value="">All Clients</option>
-          ${GANTT_CLIENTS.map(c => `<option value="${esc(c.id)}" ${c.id === GANTT_FILTER_CLIENT ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cp-form-field" style="margin-bottom:0;">
-        <label class="cp-flabel">Project</label>
-        <select class="cp-finput" id="ganttFilterProject">
-          <option value="">All Projects</option>
-          ${clientProjects.map(p => `<option value="${esc(p.projectId)}" ${p.projectId === GANTT_FILTER_PROJECT ? 'selected' : ''}>${esc(p.projectName)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cp-form-field" style="margin-bottom:0;">
-        <label class="cp-flabel">Employee</label>
-        <select class="cp-finput" id="ganttFilterEmployee">
-          <option value="">All Employees</option>
-          ${employeesWithActivity.map(e => `<option value="${esc(e.id)}" ${e.id === GANTT_FILTER_EMPLOYEE ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
-        </select>
-      </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:.6rem;">
+      <select id="ganttFilterClient" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+        color:var(--txt1);font-size:12px;padding:6px 8px;cursor:pointer;">
+        <option value="">All Clients</option>
+        ${GANTT_CLIENTS.map(c => `<option value="${esc(c.id)}" ${c.id === GANTT_FILTER_CLIENT ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+      </select>
+      <select id="ganttFilterProject" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+        color:var(--txt1);font-size:12px;padding:6px 8px;cursor:pointer;">
+        <option value="">All Projects</option>
+        ${clientProjects.map(p => `<option value="${esc(p.projectId)}" ${p.projectId === GANTT_FILTER_PROJECT ? 'selected' : ''}>${esc(p.projectName)}</option>`).join('')}
+      </select>
+      <select id="ganttFilterEmployee" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+        color:var(--txt1);font-size:12px;padding:6px 8px;cursor:pointer;">
+        <option value="">All Employees</option>
+        ${employeesWithActivity.map(e => `<option value="${esc(e.id)}" ${e.id === GANTT_FILTER_EMPLOYEE ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
+      </select>
     </div>
   `;
 }
@@ -489,8 +488,25 @@ function renderTimeline() {
     else yearGroups.push({ year: m.year, count: 1 });
   });
 
+  // Column totals — sum of Views Delivered across every visible
+  // project, for each month currently on the timeline. Reuses
+  // getMonthlyViewsDelivered() per project/month, same formula as
+  // every individual block — just summed across the filtered set.
+  const monthTotals = months.map(m =>
+    projects.reduce((s, p) => s + getMonthlyViewsDelivered(p, m.key).views, 0)
+  );
+  const TOTAL_ROW_HEIGHT = 26;
+
+  // Grand total — sum of every visible project's Completed Views.
+  // Mathematically identical to summing monthTotals above (each
+  // project's monthly weights always sum to 1), shown once in the
+  // header badge rather than recomputed a second way.
+  const grandTotal = projects.reduce((s, p) => s + (parseFloat(p.completedViews) || 0), 0);
+  const badgeVal = document.querySelector('#ganttTotalViewsBadge > div:last-child');
+  if (badgeVal) badgeVal.textContent = grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 1 });
+
   wrap.innerHTML = `
-    <div id="ganttScroll" style="overflow:auto;max-height:${bodyHeight + GANTT_HEADER_HEIGHT}px;position:relative;">
+    <div id="ganttScroll" style="overflow:auto;max-height:${bodyHeight + GANTT_HEADER_HEIGHT + TOTAL_ROW_HEIGHT}px;position:relative;">
       <div style="width:${GANTT_LABEL_WIDTH + totalWidth}px;">
 
         <!-- Header: corner + year row + month row -->
@@ -510,6 +526,22 @@ function renderTimeline() {
                 border-right:1px solid var(--border);border-bottom:1px solid var(--border);display:flex;align-items:center;
                 justify-content:center;font-size:9px;color:var(--txt2);white-space:nowrap;overflow:hidden;">${GANTT_MONTH_WIDTH > 20 ? m.label : ''}</div>`).join('')}
             </div>
+          </div>
+        </div>
+
+        <!-- Total row — sum of Views Delivered per month, across
+             every currently-visible project. Sticky just below the
+             header so it stays visible while scrolling down through
+             many project rows. -->
+        <div style="display:flex;position:sticky;top:${GANTT_HEADER_HEIGHT}px;z-index:3;">
+          <div style="position:sticky;left:0;width:${GANTT_LABEL_WIDTH}px;flex-shrink:0;height:${TOTAL_ROW_HEIGHT}px;
+            background:var(--surface2);border-right:1px solid var(--border);border-bottom:2px solid var(--border-md);z-index:4;
+            display:flex;align-items:center;padding:0 12px;font-size:10.5px;font-weight:700;color:var(--txt1);">Total</div>
+          <div style="display:flex;">
+            ${months.map((m, i) => `<div style="width:${GANTT_MONTH_WIDTH}px;flex-shrink:0;height:${TOTAL_ROW_HEIGHT}px;
+              background:var(--surface2);border-right:1px solid var(--border);border-bottom:2px solid var(--border-md);
+              display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;color:var(--a1);
+              white-space:nowrap;overflow:hidden;">${monthTotals[i] > 0 && GANTT_MONTH_WIDTH >= 26 ? monthTotals[i].toFixed(1) : ''}</div>`).join('')}
           </div>
         </div>
 

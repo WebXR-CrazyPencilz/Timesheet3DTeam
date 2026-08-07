@@ -1,17 +1,17 @@
 // ═══════════════════════════════════════════════════
 // MANAGER.JS — Manager Portal shell
-// Tabs: Project | Employees | Salary | Client
+// Tabs: Dashboard | Project | Employees | Salary | Client | ...
 //
 // This file is ONLY a loading/navigation platform. It owns the
 // Employee module (timesheet data, employee cards, Employee Detail
 // hook) and the top-level tab shell — it never calculates or renders
-// Client or Project data itself. The Client and Project tabs simply
-// hand their content container to client-project.js:
+// Client, Project, or Dashboard data itself. Each other tab is a pure
+// hand-off to the module that owns it:
 //
-//   Project   → client-project.js (renderProjectTab)  ← default tab
+//   Dashboard → dashboard.js (renderManagerDashboard) ← default tab
+//   Project   → client-project.js (renderProjectTab) — also covers Clients (folded in, sort A→Z/Z→A/New→Old/Old→New)
 //   Employees → this file (renderEmployeesTab)
 //   Salary    → salary.js (renderSalaryTab)
-//   Client    → client-project.js (renderClientTab)
 //
 // Master data (employees/clients/projects) is fetched once here and
 // the clients/projects portion is handed off to client-project.js via
@@ -27,7 +27,7 @@
 let MGR_DATA           = [];
 let MGR_EMPLOYEES      = [];
 
-let MGR_TAB            = 'project';    // project|client|employees|salary — Project is the default landing tab
+let MGR_TAB            = 'dashboard'; // dashboard|project|employees|salary|... — Dashboard is the default landing tab
 let MGR_RANGE          = 'week';
 let MGR_DAY_OFFSET     = 0;
 let MGR_SELECTED_MONTH = '';
@@ -92,11 +92,10 @@ function renderManagerPortal() {
     <!-- Top nav tabs -->
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
-        { id:'project',   icon:'📁', label:'Project'   },
-        { id:'client',    icon:'🏢', label:'Client'    },
+        { id:'dashboard', icon:'🏠', label:'Dashboard' },
+        { id:'project',   icon:'📁', label:'Projects & Clients' },
         { id:'employees', icon:'👥', label:'Employees' },
         { id:'attendance',icon:'🕒', label:'Attendance' },
-        { id:'oldprojects',icon:'📜', label:'OLD Projects' },
         { id:'timeline',   icon:'📊', label:'Project Timeline' },
         { id:'salary',    icon:'💼', label:'Salary'    },
       ].map(t => `
@@ -135,6 +134,12 @@ function renderMgrTab() {
   const content = $('mgrTabContent');
   if (!content) return;
 
+  if (MGR_TAB === 'dashboard') {
+    if (typeof renderManagerDashboard === 'function') renderManagerDashboard(content);
+    else content.innerHTML = `<div class="chart-empty">Dashboard module (dashboard.js) is not loaded.</div>`;
+    return;
+  }
+
   if (MGR_TAB === 'project') {
     if (typeof renderProjectTab === 'function') renderProjectTab(content);
     else content.innerHTML = `<div class="chart-empty">Project module (client-project.js) is not loaded.</div>`;
@@ -149,11 +154,6 @@ function renderMgrTab() {
     return;
   }
 
-  if (MGR_TAB === 'oldprojects') {
-    if (typeof renderOldProjectsTab === 'function') renderOldProjectsTab(content);
-    else content.innerHTML = `<div class="chart-empty">OLD Projects module (client-project.js) is not loaded.</div>`;
-    return;
-  }
 
   if (MGR_TAB === 'timeline') {
     if (typeof initGantt === 'function') initGantt(content);
@@ -167,11 +167,6 @@ function renderMgrTab() {
     return;
   }
 
-  if (MGR_TAB === 'client') {
-    if (typeof renderClientTab === 'function') renderClientTab(content);
-    else content.innerHTML = `<div class="chart-empty">Client module (client-project.js) is not loaded.</div>`;
-    return;
-  }
 }
 
 // ══════════════════════════════════════════════════

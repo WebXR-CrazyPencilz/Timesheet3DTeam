@@ -14,8 +14,7 @@
 // client-project.js already enforces (backend-checked in Code.gs,
 // not just hidden in this UI).
 //
-//   Project   → client-project.js (renderProjectTab)  ← default tab
-//   Client    → client-project.js (renderClientTab)
+//   Project   → client-project.js (renderProjectTab) — also covers Clients (folded in, same merged view as Manager Portal)
 //   Employees → this file (renderTLEmployeesTab)
 //
 // Access: all employees, force leave, project/client cards + hours.
@@ -28,7 +27,7 @@ let TL_EMPLOYEES   = [];
 let TL_CLIENTS     = [];
 let TL_PROJECTS    = [];
 
-let TL_TAB         = 'employees';  // project|client|employees|historical — Employees is the default landing tab (Team Leader manages people first)
+let TL_TAB         = 'employees';  // project|employees|attendance|historical — Employees is the default landing tab (Team Leader manages people first)
 let TL_RANGE       = 'week';
 let TL_DAY_OFFSET  = 0;
 let TL_MONTH       = '';
@@ -92,11 +91,9 @@ function renderTLPortal() {
     <!-- Top nav tabs -->
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
-        { id:'project',    icon:'📁', label:'Project'    },
-        { id:'client',     icon:'🏢', label:'Client'     },
+        { id:'project',    icon:'📁', label:'Projects & Clients' },
         { id:'employees',  icon:'👥', label:'Employees'  },
         { id:'attendance', icon:'🕒', label:'Attendance' },
-        { id:'oldprojects',icon:'📜', label:'OLD Projects' },
         { id:'historical', icon:'📜', label:'Historical Import' },
       ].map(t => `
         <button class="tl-tab${TL_TAB===t.id?' active':''}" data-tab="${t.id}" style="
@@ -140,23 +137,11 @@ function renderTLTab() {
     return;
   }
 
-  if (TL_TAB === 'client') {
-    if (typeof renderClientTab === 'function') renderClientTab(content);
-    else content.innerHTML = `<div class="chart-empty">Client module (client-project.js) is not loaded.</div>`;
-    return;
-  }
-
   if (TL_TAB === 'employees') { renderTLEmployeesTab(content); return; }
 
   if (TL_TAB === 'attendance') {
     if (typeof renderAttendanceTab === 'function') renderAttendanceTab(content);
     else content.innerHTML = `<div class="chart-empty">Attendance module (client-project.js) is not loaded.</div>`;
-    return;
-  }
-
-  if (TL_TAB === 'oldprojects') {
-    if (typeof renderOldProjectsTab === 'function') renderOldProjectsTab(content);
-    else content.innerHTML = `<div class="chart-empty">OLD Projects module (client-project.js) is not loaded.</div>`;
     return;
   }
 
