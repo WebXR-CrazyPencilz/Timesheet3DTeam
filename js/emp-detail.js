@@ -65,11 +65,10 @@ async function openEmpDetail(empId, empName) {
   DETAIL_MONTH       = todayStr().slice(0, 7);
   DETAIL_MONTH_CACHE = {};
 
-  // Calculate default date range: last 30 days
-  const today = new Date();
-  const from  = new Date(); from.setDate(today.getDate() - 29);
-  const toStr   = toLocalDateStr(today);
-  const fromStr = toLocalDateStr(from);
+  // Default date range: All Time — the only quick-range option left
+  // now that Last 30 Days/From/To/Apply are gone from the UI.
+  const toStr   = todayStr();
+  const fromStr = '2020-01-01';
 
   const container = getEmpDetailContainer();
   if (!container) return;
@@ -102,28 +101,26 @@ async function openEmpDetail(empId, empName) {
         <span style="font-size:12px;color:var(--txt2);font-weight:600;">Date Range:</span>
 
         <div style="display:flex;gap:6px;flex-wrap:wrap;" id="quickRanges">
-          <button class="qr-btn active" data-days="30">Last 30 Days</button>
-          <button class="qr-btn" data-days="0">All Time</button>
+          <button class="qr-btn active" data-days="0">All Time</button>
         </div>
 
-        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;">
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-size:11px;color:var(--txt2);">From</span>
-            <input type="date" id="empDetailFrom" value="${fromStr}"
-              style="background:var(--surface2);border:1px solid var(--border);
-              border-radius:6px;color:var(--txt1);font-size:12px;padding:5px 8px;cursor:pointer;"/>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span style="font-size:11px;color:var(--txt2);">To</span>
-            <input type="date" id="empDetailTo" value="${toStr}"
-              style="background:var(--surface2);border:1px solid var(--border);
-              border-radius:6px;color:var(--txt1);font-size:12px;padding:5px 8px;cursor:pointer;"/>
-          </div>
-          <button id="empDetailApply" style="
-            background:var(--a1);color:#fff;border:none;
-            border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;
-          ">Apply</button>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:11px;color:var(--txt2);">🗓️ Month</span>
+          <input type="month" id="empDetailMonthPicker"
+            style="background:var(--surface2);border:1px solid var(--border);
+            border-radius:6px;color:var(--txt1);font-size:12px;padding:5px 8px;cursor:pointer;"/>
         </div>
+      </div>
+      <input type="date" id="empDetailFrom" value="${fromStr}" style="display:none;"/>
+      <input type="date" id="empDetailTo" value="${toStr}" style="display:none;"/>
+
+      <!-- Specific Date — horizontally scrollable strip of day chips
+           (day name + date), not a native date input. Click one to
+           jump straight to that single day. Populated for a rolling
+           window ending today (see buildSpecificDateStrip). -->
+      <div style="margin-bottom:1.1rem;">
+        <div style="font-size:11px;color:var(--txt2);font-weight:600;margin-bottom:6px;">📅 Specific Date</div>
+        <div id="empDetailDateStrip" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;"></div>
       </div>
 
       <!-- Content area -->
@@ -213,6 +210,8 @@ async function openEmpDetail(empId, empName) {
     btn.addEventListener('click', () => {
       $('quickRanges').querySelectorAll('.qr-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      clearActiveDateChip(); // switching back to a range clears any single-day/month selection
+      $('empDetailMonthPicker').value  = '';
       const days = parseInt(btn.dataset.days);
       const tod  = new Date();
       $('empDetailTo').value = toLocalDateStr(tod);
@@ -226,13 +225,93 @@ async function openEmpDetail(empId, empName) {
     });
   });
 
-  // Bind apply button
-  $('empDetailApply').addEventListener('click', () => {
+  // Month — sets From/To to that calendar month's start/end (clamped
+  // to today if the month is the current one, so it never requests
+  // into the future). Same loadEmpDetail() as everything else.
+  $('empDetailMonthPicker').addEventListener('change', e => {
+    const val = e.target.value; // 'YYYY-MM'
+    if (!val) return;
+    const [y, m] = val.split('-').map(Number);
+    const first = `${val}-01`;
+    const lastDayNum = new Date(y, m, 0).getDate(); // day 0 of next month = last day of this month
+    const lastOfMonth = `${val}-${String(lastDayNum).padStart(2, '0')}`;
+    const tod = toLocalDateStr(new Date());
+    const to  = lastOfMonth > tod ? tod : lastOfMonth;
+
     $('quickRanges').querySelectorAll('.qr-btn').forEach(b => b.classList.remove('active'));
-    loadEmpDetail($('empDetailFrom').value, $('empDetailTo').value);
+    clearActiveDateChip();
+    $('empDetailFrom').value = first;
+    $('empDetailTo').value   = to;
+    loadEmpDetail(first, to);
   });
 
+  buildSpecificDateStrip();
+
   await loadEmpDetail(fromStr, toStr);
+}
+
+// ── SPECIFIC DATE STRIP (horizontal scroll, day name + date) ────
+// A rolling 60-day window ending today, newest first, so the most
+// likely days someone wants to check are one swipe away rather than
+// buried at the far end of the scroll. Clicking a chip jumps straight
+// to that single day via the same loadEmpDetail() as everything else
+// on this page — no separate data path.
+const EMP_DETAIL_DATE_STRIP_DAYS = 60;
+
+function buildSpecificDateStrip(selectedDate) {
+  const strip = $('empDetailDateStrip');
+  if (!strip) return;
+
+  const tod = new Date();
+  const chips = [];
+  for (let i = 0; i < EMP_DETAIL_DATE_STRIP_DAYS; i++) {
+    const d = new Date(tod); d.setDate(tod.getDate() - i);
+    chips.push(d);
+  }
+
+  strip.innerHTML = chips.map(d => {
+    const dateStr   = toLocalDateStr(d);
+    const dayName   = d.toLocaleDateString('en-IN', { weekday: 'short' });
+    const dayNum    = d.toLocaleDateString('en-IN', { day: '2-digit' });
+    const monthName = d.toLocaleDateString('en-IN', { month: 'short' });
+    const isToday   = dateStr === toLocalDateStr(tod);
+    const active    = dateStr === selectedDate;
+    return `
+      <button class="emp-date-chip" data-date="${dateStr}" style="flex-shrink:0;display:flex;flex-direction:column;
+        align-items:center;gap:1px;min-width:52px;padding:6px 8px;border-radius:8px;cursor:pointer;
+        border:1px solid ${active ? 'var(--a1)' : 'var(--border)'};
+        background:${active ? 'var(--a1)' : 'var(--surface2)'};
+        color:${active ? '#fff' : 'var(--txt1)'};">
+        <span style="font-size:9.5px;font-weight:600;opacity:.85;">${esc(dayName)}${isToday ? ' •' : ''}</span>
+        <span style="font-size:13px;font-weight:800;">${esc(dayNum)}</span>
+        <span style="font-size:9px;opacity:.85;">${esc(monthName)}</span>
+      </button>`;
+  }).join('');
+
+  strip.querySelectorAll('.emp-date-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const d = chip.dataset.date;
+      $('quickRanges').querySelectorAll('.qr-btn').forEach(b => b.classList.remove('active'));
+      $('empDetailMonthPicker').value = '';
+      $('empDetailFrom').value = d;
+      $('empDetailTo').value   = d;
+      buildSpecificDateStrip(d); // re-render so the clicked chip highlights
+      loadEmpDetail(d, d);
+    });
+  });
+}
+
+// Clears the highlighted chip (if any) without rebuilding the whole
+// strip's click handlers — used whenever a range/month/quick-pill is
+// chosen instead, so the strip never shows a stale "selected" day.
+function clearActiveDateChip() {
+  const strip = $('empDetailDateStrip');
+  if (!strip) return;
+  strip.querySelectorAll('.emp-date-chip').forEach(chip => {
+    chip.style.border = '1px solid var(--border)';
+    chip.style.background = 'var(--surface2)';
+    chip.style.color = 'var(--txt1)';
+  });
 }
 
 // ── Load data from API ─────────────────────────────────────────

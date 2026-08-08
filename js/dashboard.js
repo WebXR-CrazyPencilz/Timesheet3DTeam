@@ -289,7 +289,7 @@ function dashComputeNotLoggedIn() {
   });
 
   return employees
-    .filter(emp => emp.status !== 'In-Active') // inactive employees don't belong on an "at-risk today" list — their history still counts fully in Team Performance/Old Projects, just not here
+    .filter(emp => emp.active !== false) // inactive employees (active:false from the backend) don't belong on an "at-risk today" list — their history still counts fully in Team Performance/Old Projects, just not here
     .filter(emp => !loggedTodayIds.has(emp.id))
     .map(emp => ({ emp, lastActivity: lastActivityByEmp[emp.id] || null }))
     .sort((a, b) => (a.lastActivity || '').localeCompare(b.lastActivity || '')); // longest-absent first

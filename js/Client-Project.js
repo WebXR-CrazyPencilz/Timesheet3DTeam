@@ -303,7 +303,7 @@ function ensureCPStyles() {
 
     .cp-card-grid {
       display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
-      gap:1.5rem;margin-top:.5rem;
+      gap:.25rem;margin-top:.25rem;
     }
     /* Main Project tab (the landing page) — one card per row, full
        width. Scoped to #cpProjectGrid only: a client's own scoped
@@ -319,8 +319,8 @@ function ensureCPStyles() {
     }
 
     .cp-entity-card {
-      background:var(--surface1);border:1px solid var(--border);border-radius:16px;
-      padding:1.5rem;display:flex;flex-direction:column;
+      background:var(--surface1);border:1px solid var(--border);border-radius:14px;
+      padding:.24rem .4rem;display:flex;flex-direction:column;
     }
     .cp-entity-head { display:flex;align-items:center;gap:12px;margin-bottom:1.1rem; }
     .cp-entity-avatar {
@@ -1181,11 +1181,11 @@ function buildProjectCard(p, isManager, cost) {
     const fillPct = isOverflow ? 100 : Math.min((cost.totalCost / cost.projectBudget) * 100, 100);
     consumedBarHtml = `<div style="width:${fillPct}%;height:100%;background:${isOverflow ? '#f87171' : '#34d399'};"></div>`;
     barLabelHtml = isManager
-      ? `<div style="font-size:11px;font-weight:700;color:${isOverflow ? '#f87171' : '#34d399'};margin-bottom:5px;">
+      ? `<div style="font-size:9px;font-weight:700;color:${isOverflow ? '#f87171' : '#34d399'};margin-bottom:3px;">
           ${isOverflow ? 'Loss' : 'Profit'} ${esc(fmtCPConstant(Math.abs(cost.profit)))}
           <span style="color:var(--txt2);font-weight:600;">— ${esc(fmtCPConstant(cost.totalCost))} of ${esc(fmtCPConstant(cost.projectBudget))} Constant</span>
         </div>`
-      : `<div style="font-size:11px;font-weight:700;color:${isOverflow ? '#f87171' : '#34d399'};margin-bottom:5px;">${esc(fmtHM(totalHours))} consumed</div>`;
+      : `<div style="font-size:9px;font-weight:700;color:${isOverflow ? '#f87171' : '#34d399'};margin-bottom:3px;">${esc(fmtHM(totalHours))} consumed</div>`;
   } else if (showProfitColor) {
     // No Project Constant set for this project — nothing to fill
     // against, so fall back to a flat Profit/Loss color instead of a
@@ -1194,16 +1194,16 @@ function buildProjectCard(p, isManager, cost) {
     consumedBarHtml = `<div style="width:100%;height:100%;background:${isProfit ? '#34d399' : '#f87171'};"
         title="${isManager ? (isProfit ? 'Profit' : 'Loss') + ': ' + fmtCPConstant(Math.abs(cost.profit)) : fmtHM(totalHours) + ' consumed'}"></div>`;
     barLabelHtml = isManager
-      ? `<div style="font-size:11px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};margin-bottom:5px;">
+      ? `<div style="font-size:9px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};margin-bottom:3px;">
           ${isProfit ? 'Profit' : 'Loss'} ${esc(fmtCPConstant(Math.abs(cost.profit)))}
           <span style="color:var(--txt2);font-weight:600;">— no Project Constant set</span>
         </div>`
-      : `<div style="font-size:11px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};margin-bottom:5px;">${esc(fmtHM(totalHours))} consumed</div>`;
+      : `<div style="font-size:9px;font-weight:700;color:${isProfit ? '#34d399' : '#f87171'};margin-bottom:3px;">${esc(fmtHM(totalHours))} consumed</div>`;
   } else if (isManagerLoadingCost) {
     consumedBarHtml = `<div style="width:100%;height:100%;background:var(--border-md);
         background-image:linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent);
         background-size:60px 100%;animation:cpBarShimmer 1.2s linear infinite;"></div>`;
-    barLabelHtml = `<div style="font-size:11px;font-weight:600;color:var(--txt2);margin-bottom:5px;">Loading cost…</div>`;
+    barLabelHtml = `<div style="font-size:9px;font-weight:600;color:var(--txt2);margin-bottom:3px;">Loading cost…</div>`;
   } else {
     consumedBarHtml = totalHours > 0
       ? totals.map((t, i) => {
@@ -1212,7 +1212,7 @@ function buildProjectCard(p, isManager, cost) {
             title="${esc(t.name)}: ${fmtHM(t.hours)}"></div>`;
         }).join('')
       : `<div style="width:100%;height:100%;background:var(--border-md);"></div>`;
-    barLabelHtml = `<div style="font-size:11px;font-weight:700;color:var(--txt1);margin-bottom:5px;">
+    barLabelHtml = `<div style="font-size:9px;font-weight:700;color:var(--txt1);margin-bottom:3px;">
         ${totalHours > 0 ? `${esc(fmtHM(totalHours))} consumed` : 'No hours logged yet'}
       </div>`;
   }
@@ -1222,22 +1222,22 @@ function buildProjectCard(p, isManager, cost) {
   // click away on the Project Detail page.
   return `
     <div class="cp-entity-card" data-search="${esc(((p.projectName || '') + ' ' + (p.projectId || '')).toLowerCase())}">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1rem;">
-        <div style="display:flex;align-items:center;gap:10px;min-width:180px;">
-          <div class="cp-entity-avatar" style="background:${color};">${esc(initials)}</div>
+      <div style="display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:5px;margin-bottom:.18rem;">
+        <div style="display:flex;align-items:center;gap:8px;min-width:180px;">
+          <div class="cp-entity-avatar" style="background:${color};width:16px;height:16px;font-size:8px;">${esc(initials)}</div>
           <div>
-            <div class="cp-entity-name" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
-            <div class="cp-entity-id" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
+            <div class="cp-entity-name" style="font-size:12px;" title="${esc(p.projectName)}">${esc(p.projectName || p.projectId)}</div>
+            <div class="cp-entity-id" style="font-size:9.5px;" title="${esc(client?.name || p.clientId || '')}">${esc(p.projectId)} · ${esc(client?.name || p.clientId || '—')}</div>
           </div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <div class="cp-metric-box" style="min-width:110px;">
+          <div class="cp-metric-box" style="min-width:60px;padding:3px 6px;">
             <div class="cp-metric-label">Start Date</div>
-            <div class="cp-metric-val" style="font-size:13.5px;">${esc(fmtCPDateShort(p.startDate))}</div>
+            <div class="cp-metric-val" style="font-size:9px;">${esc(fmtCPDateShort(p.startDate))}</div>
           </div>
-          <div class="cp-metric-box" style="min-width:110px;">
+          <div class="cp-metric-box" style="min-width:60px;padding:3px 6px;">
             <div class="cp-metric-label">${esc(endOrStatusLabel)}</div>
-            <div class="cp-metric-val" style="font-size:13.5px;">${esc(endOrStatusValue)}</div>
+            <div class="cp-metric-val" style="font-size:9px;">${esc(endOrStatusValue)}</div>
           </div>
         </div>
       </div>
@@ -1245,7 +1245,7 @@ function buildProjectCard(p, isManager, cost) {
       <div>
         ${barLabelHtml}
         <div style="display:flex;align-items:center;gap:12px;">
-          <div style="flex:1;height:16px;background:var(--surface2);border-radius:8px;overflow:hidden;position:relative;display:flex;">
+          <div style="flex:1;height:4px;background:var(--surface2);border-radius:4px;overflow:hidden;position:relative;display:flex;">
             ${consumedBarHtml}
           </div>
           <button class="cp-view-btn cp-project-view-btn" data-id="${esc(p.projectId)}" style="flex-shrink:0;">View Details →</button>
@@ -1267,30 +1267,30 @@ function buildHistoricalOnlyCard(hp) {
 
   return `
     <div class="cp-entity-card" data-search="${esc(((hp.projectName || '') + ' ' + (hp.clientName || '')).toLowerCase())}">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:1rem;">
-        <div style="display:flex;align-items:center;gap:10px;min-width:180px;">
-          <div class="cp-entity-avatar" style="background:${color};">${esc(initials)}</div>
+      <div style="display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:5px;margin-bottom:.18rem;">
+        <div style="display:flex;align-items:center;gap:8px;min-width:180px;">
+          <div class="cp-entity-avatar" style="background:${color};width:16px;height:16px;font-size:8px;">${esc(initials)}</div>
           <div>
-            <div class="cp-entity-name" title="${esc(hp.projectName || '')}">${esc(hp.projectName || '—')}
+            <div class="cp-entity-name" style="font-size:12px;" title="${esc(hp.projectName || '')}">${esc(hp.projectName || '—')}
               <span style="font-size:9.5px;font-weight:700;color:var(--txt2);background:var(--surface2);
                 border-radius:8px;padding:1px 6px;margin-left:4px;vertical-align:middle;">Historical</span>
             </div>
-            <div class="cp-entity-id" title="${esc(hp.clientName || '')}">${esc(hp.clientName || '—')}</div>
+            <div class="cp-entity-id" style="font-size:9.5px;" title="${esc(hp.clientName || '')}">${esc(hp.clientName || '—')}</div>
           </div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;">
-          <div class="cp-metric-box" style="min-width:110px;">
+          <div class="cp-metric-box" style="min-width:60px;padding:3px 6px;">
             <div class="cp-metric-label">Months</div>
-            <div class="cp-metric-val" style="font-size:13.5px;">${esc(hp.monthCount ?? '—')}</div>
+            <div class="cp-metric-val" style="font-size:9px;">${esc(hp.monthCount ?? '—')}</div>
           </div>
-          <div class="cp-metric-box" style="min-width:110px;">
+          <div class="cp-metric-box" style="min-width:60px;padding:3px 6px;">
             <div class="cp-metric-label">Status</div>
-            <div class="cp-metric-val" style="font-size:13.5px;">${hp.isFinal ? 'Final' : 'Draft'}</div>
+            <div class="cp-metric-val" style="font-size:9px;">${hp.isFinal ? 'Final' : 'Draft'}</div>
           </div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
-        <div style="flex:1;height:16px;background:var(--surface2);border-radius:8px;overflow:hidden;position:relative;display:flex;">
+        <div style="flex:1;height:4px;background:var(--surface2);border-radius:4px;overflow:hidden;position:relative;display:flex;">
           <div style="width:100%;height:100%;background:var(--border-md);"></div>
           <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
             font-size:10.5px;font-weight:700;color:var(--txt1);">
@@ -3282,8 +3282,9 @@ function renderAttendanceGrid() {
 
               return `
               <tr style="border-top:1px solid var(--border);">
-                <td style="padding:8px 12px;color:var(--txt1);font-weight:600;white-space:nowrap;
-                  position:sticky;left:0;background:var(--surface1);">
+                <td class="attend-emp-cell" data-emp-id="${esc(emp.id)}" data-emp-name="${esc(emp.name)}"
+                  style="padding:8px 12px;color:var(--txt1);font-weight:600;white-space:nowrap;cursor:pointer;
+                  position:sticky;left:0;background:var(--surface1);" title="Click to view ${esc(emp.name)}'s details">
                   ${esc(emp.name)}<br/><span style="font-size:10px;color:var(--txt2);font-weight:500;">${esc(emp.id)}</span>
                 </td>
                 ${dayCellsHtml}
@@ -3305,6 +3306,15 @@ function renderAttendanceGrid() {
   wrap.querySelectorAll('.attend-no-entry-cell').forEach(cell => {
     cell.addEventListener('click', () => {
       openAttendanceCellMenu(cell, cell.dataset.empId, cell.dataset.empName, cell.dataset.date);
+    });
+  });
+
+  // Employee name column is clickable too — opens that employee's
+  // individual data. Reuses openEmpDetail() from emp-detail.js exactly
+  // as-is (same page the Employees tab already opens), not a new view.
+  wrap.querySelectorAll('.attend-emp-cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      if (typeof openEmpDetail === 'function') openEmpDetail(cell.dataset.empId, cell.dataset.empName);
     });
   });
 }
