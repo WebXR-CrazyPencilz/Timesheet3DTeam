@@ -183,8 +183,8 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
 }
 .hr-portal-badge{
   font-size:.68rem;font-weight:700;padding:.28rem .75rem;
-  background:rgba(200,185,106,.15);color:#c8b96a;
-  border:1px solid rgba(200,185,106,.3);border-radius:var(--rf);
+  background:rgba(251,191,36,.15);color:#fbbf24;
+  border:1px solid rgba(251,191,36,.3);border-radius:var(--rf);
   letter-spacing:.04em;flex-shrink:0;
 }
 
@@ -261,8 +261,15 @@ input,select,textarea{-webkit-appearance:none;appearance:none}
    own auto-fill columns collapsing naturally as the viewport shrinks.
    The Employee (worker) portal keeps the original 960px — it's a
    single-column timesheet view, not a dashboard, and was never part
-   of this widening. */
+   of this widening. HR Portal joins Manager/Team Leader here since
+   it's also a dashboard-style shell, not a single-column view. */
 #mgrPortal .main,#tlPortal .main{max-width:1680px;padding:1.75rem 2.5rem}
+/* HR Portal has no width cap at all — the Attendance grid in
+   particular (many day-columns side by side) benefits from using
+   every available pixel on a wide monitor rather than being capped
+   like Manager/TL's card-grid dashboards, which reflow fine at
+   1680px. */
+#hrPortal .main{max-width:none;width:100%;padding:1.75rem 2.5rem}
 .phdr{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.4rem;flex-wrap:wrap}
 .ptitle{font-family:var(--fd);font-size:1.55rem;font-weight:700;letter-spacing:-.03em}
 .psub{font-size:.78rem;color:var(--txt2);margin-top:.15rem}
@@ -476,7 +483,7 @@ tr:hover .del-btn{opacity:1}
 
 @media(max-width:640px){
   .main{padding:1.1rem .9rem}.bar{padding:0 .9rem}
-  #mgrPortal .main,#tlPortal .main{padding:1.1rem .9rem}
+  #mgrPortal .main,#tlPortal .main,#hrPortal .main{padding:1.1rem .9rem}
   .fcard{padding:1.1rem}.ptitle{font-size:1.25rem}
   .frow{grid-template-columns:1fr}.strip{flex-wrap:wrap}
   .sitem{border-right:none;border-bottom:1px solid var(--border);flex:1 1 45%}
@@ -608,7 +615,8 @@ tr:hover .del-btn{opacity:1}
     <div class="dhint">
       <strong>🔑 Demo — </strong>select any name, password is <code>pass123</code><br>
       Manager: select <code>🔑 Manager</code>, password <code>manager123</code><br>
-      Team Leader: select <code>👥 Team Leader</code>, password <code>teamlead123</code>
+      Team Leader: select <code>👥 Team Leader</code>, password <code>teamlead123</code><br>
+      HR: select <code>🧑‍💼 HR</code>, password <code>hraccess2026</code>
     </div>
     <div class="lfooter">WebXR Team &middot; TimeTrack v4.0 &middot; Worker Portal</div>
   </div>
@@ -855,7 +863,7 @@ tr:hover .del-btn{opacity:1}
   </main>
 </div>
 
-<!-- ═══ HR PORTAL ════════════════════════════════════════════════ -->
+<!-- ═══ HR PORTAL ═══════════════════════════════════════════════ -->
 <div id="hrPortal">
   <header class="bar">
     <div class="bar-brand">
@@ -870,13 +878,13 @@ tr:hover .del-btn{opacity:1}
     </div>
     <div class="bar-div"></div>
     <div class="bar-worker">
-      <div class="avatar" id="hrAv" style="background:linear-gradient(135deg,#c8b96a,#e6d9a8);">HR</div>
+      <div class="avatar" id="hrAv" style="background:linear-gradient(135deg,#fbbf24,#fb923c);">HR</div>
       <div class="winfo">
         <span class="wname" id="hrName">HR</span>
         <span class="wteam" id="hrTeam">HR Portal</span>
       </div>
     </div>
-    <div class="hr-portal-badge">🗂️ HR View</div>
+    <div class="hr-portal-badge">🧑‍💼 HR View</div>
     <div class="bar-right">
       <button class="ibtn" onclick="togTheme()" aria-label="Toggle theme">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
@@ -891,12 +899,12 @@ tr:hover .del-btn{opacity:1}
     <div class="phdr">
       <div>
         <h1 class="ptitle">HR Dashboard</h1>
-        <p class="psub">Human resources — employee records, onboarding & compliance.</p>
+        <p class="psub">Attendance, project contribution & employee creation.</p>
       </div>
       <div class="dbadge" id="hrBadge"></div>
     </div>
     <div id="hrApp">
-      <div class="slot-loading"><div class="slot-spinner"></div><span>Loading HR data…</span></div>
+      <div class="slot-loading"><div class="slot-spinner"></div><span>Loading team data…</span></div>
     </div>
   </main>
 </div>

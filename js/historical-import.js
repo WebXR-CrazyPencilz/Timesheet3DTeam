@@ -361,9 +361,74 @@ function renderHistoricalMonths() {
   const container = $('histMonthsContainer');
   if (!container || !HIST_CURRENT) return;
 
-  container.innerHTML = HIST_CURRENT.months.map((m, i) => buildHistMonthCard(m, i)).join('');
+  const locked = HIST_CURRENT.isFinal;
+
+  container.innerHTML = HIST_CURRENT.months.map((m, i) => buildHistMonthCard(m, i)).join('')
+    + (!locked ? `
+      <button id="histAddMonthBtn" style="background:none;border:1px dashed var(--border-md);color:var(--a1);
+        border-radius:8px;padding:9px 16px;font-size:12px;font-weight:600;cursor:pointer;width:100%;margin-top:.4rem;">
+        + Add Month
+      </button>
+      <div id="histAddMonthForm" style="display:none;margin-top:.6rem;padding:.9rem 1rem;background:var(--surface1);
+        border:1px solid var(--border);border-radius:10px;align-items:center;gap:10px;flex-wrap:wrap;">
+        <input id="histAddMonthInput" type="month" class="cp-finput" style="font-size:12.5px;padding:6px 8px;width:auto;"/>
+        <button id="histAddMonthConfirm" class="cp-btn-primary" style="padding:6px 14px;font-size:11.5px;">Add</button>
+        <button id="histAddMonthCancel" class="cp-btn-ghost" style="padding:6px 14px;font-size:11.5px;">Cancel</button>
+      </div>` : '');
 
   HIST_CURRENT.months.forEach((m, i) => wireHistMonthCard(i));
+  if (!locked) wireHistAddMonth();
+}
+
+// Lets a Team Leader extend the range at any point — not just at
+// creation time — because a project's real range often isn't known
+// up front, and there was previously no way back into the Start→End
+// picker once the register screen opened. Adding a month here is the
+// same shape createHistoricalSheet() already produces (an empty
+// { month, year, collapsed:false, records:[] }), just appended
+// in-place and kept sorted so it lands in chronological order
+// alongside the existing months instead of always at the end.
+function wireHistAddMonth() {
+  const btn = $('histAddMonthBtn');
+  const form = $('histAddMonthForm');
+  const input = $('histAddMonthInput');
+  if (!btn || !form || !input) return;
+
+  btn.addEventListener('click', () => {
+    form.style.display = 'flex';
+    btn.style.display = 'none';
+    input.focus();
+  });
+
+  $('histAddMonthCancel')?.addEventListener('click', () => {
+    form.style.display = 'none';
+    btn.style.display = 'block';
+    input.value = '';
+  });
+
+  $('histAddMonthConfirm')?.addEventListener('click', () => {
+    const val = input.value; // 'YYYY-MM'
+    if (!val) { toast?.('e', 'Pick a month first'); return; }
+    const [y, m] = val.split('-').map(Number);
+    const monthName = HIST_MONTHS[m - 1];
+    const year = String(y);
+
+    const already = HIST_CURRENT.months.some(mo => mo.month === monthName && mo.year === year);
+    if (already) {
+      toast?.('i', `${monthName} ${year} is already in this register`);
+      form.style.display = 'none';
+      btn.style.display = 'block';
+      input.value = '';
+      return;
+    }
+
+    HIST_CURRENT.months.push({ month: monthName, year, collapsed: false, records: [] });
+    HIST_CURRENT.months.sort((a, b) => (a.year + String(HIST_MONTHS.indexOf(a.month) + 1).padStart(2, '0'))
+      .localeCompare(b.year + String(HIST_MONTHS.indexOf(b.month) + 1).padStart(2, '0')));
+
+    renderHistoricalMonths();
+    toast?.('s', `${monthName} ${year} added`, 'Add employees, then Save Draft to persist it.');
+  });
 }
 
 function buildHistMonthCard(m, index) {

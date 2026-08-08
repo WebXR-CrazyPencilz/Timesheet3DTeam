@@ -25,7 +25,7 @@
 // ── STATE ─────────────────────────────────────────
 let HR_DATA      = [];
 let HR_EMPLOYEES = [];
-let HR_TAB       = 'attendance'; // attendance|contribution|addEmployee
+let HR_TAB       = 'dashboard'; // dashboard|attendance|contribution|addEmployee — Dashboard is the default landing tab
 
 // ── INIT ──────────────────────────────────────────
 async function initHR() {
@@ -72,6 +72,7 @@ function renderHRPortal() {
   container.innerHTML = `
     <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:0;">
       ${[
+        { id:'dashboard',    icon:'🏠', label:'Dashboard' },
         { id:'attendance',   icon:'🕒', label:'Attendance' },
         { id:'contribution', icon:'📊', label:'Project Contribution' },
         { id:'addEmployee',  icon:'➕', label:'Add Employee' },
@@ -108,6 +109,11 @@ function renderHRTab() {
   const content = $('hrTabContent');
   if (!content) return;
 
+  if (HR_TAB === 'dashboard') {
+    if (typeof renderHRDashboard === 'function') renderHRDashboard(content);
+    else content.innerHTML = `<div class="chart-empty">Dashboard module (dashboard.js) is not loaded.</div>`;
+    return;
+  }
   if (HR_TAB === 'attendance') {
     if (typeof renderAttendanceTab === 'function') renderAttendanceTab(content);
     else content.innerHTML = `<div class="chart-empty">Attendance module (client-project.js) is not loaded.</div>`;
@@ -115,6 +121,92 @@ function renderHRTab() {
   }
   if (HR_TAB === 'contribution') { renderHRContributionTab(content); return; }
   if (HR_TAB === 'addEmployee')  { renderHRAddEmployeeTab(content);  return; }
+}
+
+// ══════════════════════════════════════════════════
+// DASHBOARD — reuses dashboard.js's Not Logged In panel and Team
+// Performance chart as-is (both are pure hours/attendance data, no
+// financials — the same reasoning Project Contribution above
+// follows). No new fetch beyond what initHR() already loaded, plus
+// the same loadProjectData/loadHistoricalData calls
+// renderManagerDashboard makes, so the Team Performance chart's
+// drill-down and per-project attribution work identically to the
+// Manager's. Clients Overview and the KPI cards are intentionally
+// left out — they're financial/placeholder widgets outside HR's
+// scope. The employee headcount card below is this file's own,
+// built from CP_EMPLOYEES the way Add Employee's team list already
+// is.
+// ══════════════════════════════════════════════════
+async function renderHRDashboard(content) {
+  if (typeof ensureDashStyles === 'function') ensureDashStyles();
+
+  content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading dashboard…</span></div>`;
+
+  try {
+    if (typeof loadProjectData === 'function')    await loadProjectData();
+    if (typeof loadHistoricalData === 'function') await loadHistoricalData();
+    if (typeof loadProjects === 'function' && (typeof GANTT_PROJECTS === 'undefined' || !GANTT_PROJECTS.length)) {
+      await loadProjects();
+    }
+  } catch (err) {
+    // Team Performance chart still works off CP_TIMESHEET_DATA alone
+    // if these fail — Views-per-candle just won't show, same
+    // graceful fallback dashboard.js already has.
+    console.warn('[HR dashboard] optional project data failed to load:', err.message);
+  }
+
+  if (typeof buildTeamPerformanceCache === 'function') buildTeamPerformanceCache();
+
+  content.innerHTML = `
+    <div id="hrHeadcountWrap" style="margin-bottom:22px;"></div>
+    <div style="display:flex;gap:10px;align-items:stretch;">
+      <div style="flex:0 0 330px;" id="hrNotLoggedWrap"></div>
+      <div style="flex:1;min-width:280px;" id="hrTeamPerfWrap"></div>
+    </div>`;
+
+  renderHRHeadcountRow($('hrHeadcountWrap'));
+  if (typeof renderDashboardNotLoggedPanel === 'function') renderDashboardNotLoggedPanel($('hrNotLoggedWrap'));
+  if (typeof renderDashboardShell === 'function') renderDashboardShell($('hrTeamPerfWrap'));
+}
+
+// Simple headcount strip — active vs inactive, and a per-team count.
+// Built straight from CP_EMPLOYEES (already loaded), nothing new
+// fetched.
+function renderHRHeadcountRow(wrap) {
+  if (!wrap) return;
+  const employees = (typeof CP_EMPLOYEES !== 'undefined' ? CP_EMPLOYEES : HR_EMPLOYEES);
+  const active   = employees.filter(e => e.active !== false).length;
+  const inactive = employees.length - active;
+
+  const byTeam = {};
+  employees.forEach(e => {
+    if (e.active === false) return;
+    const t = e.team || 'Unassigned';
+    byTeam[t] = (byTeam[t] || 0) + 1;
+  });
+  const teamRows = Object.entries(byTeam).sort((a, b) => b[1] - a[1]);
+
+  wrap.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;min-width:140px;">
+        <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Active Employees</div>
+        <div style="font-size:22px;font-weight:700;color:var(--txt1);margin-top:2px;">${active}</div>
+      </div>
+      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;min-width:140px;">
+        <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Inactive</div>
+        <div style="font-size:22px;font-weight:700;color:var(--txt1);margin-top:2px;">${inactive}</div>
+      </div>
+      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;flex:1;min-width:260px;">
+        <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px;">By Team</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;">
+          ${teamRows.map(([team, count]) => `
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span style="font-size:14px;font-weight:700;color:var(--a1);">${count}</span>
+              <span style="font-size:11.5px;color:var(--txt2);">${esc(team)}</span>
+            </div>`).join('') || '<span style="font-size:11.5px;color:var(--txt2);">No employees yet.</span>'}
+        </div>
+      </div>
+    </div>`;
 }
 
 // ══════════════════════════════════════════════════
