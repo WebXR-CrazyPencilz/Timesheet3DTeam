@@ -230,6 +230,7 @@ function sortProjectsBySelection(projects, mode) {
 function getCPRole() {
   if (typeof MANAGER_MODE !== 'undefined' && MANAGER_MODE) return 'manager';
   if (typeof TL_MODE !== 'undefined' && TL_MODE)          return 'tl';
+  if (typeof HR_MODE !== 'undefined' && HR_MODE)          return 'hr';
   return null;
 }
 

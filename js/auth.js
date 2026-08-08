@@ -6,6 +6,7 @@ let USER           = null;
 let LIVE_EMPLOYEES = [];
 let MANAGER_MODE   = false;
 let TL_MODE        = false;
+let HR_MODE        = false;
 
 async function initLogin() {
   console.log('[AUTH] initLogin | DEMO_MODE:', CONFIG.DEMO_MODE);
@@ -19,6 +20,7 @@ async function initLogin() {
       if (u?.id) {
         if (u.role === 'manager')    loginAsManager(u, true);
         else if (u.role === 'tl')    loginAsTL(u, true);
+        else if (u.role === 'hr')    loginAsHR(u, true);
         else                         loginAs(u, true);
       }
     }
@@ -98,6 +100,12 @@ function renderEmployeeDropdown() {
     empSel.appendChild(tlOpt);
   });
 
+  // Add HR option — same single-account pattern as Manager
+  const hrOpt = document.createElement('option');
+  hrOpt.value = CONFIG.HR_ID || 'HR';
+  hrOpt.textContent = '🧑‍💼 HR';
+  empSel.appendChild(hrOpt);
+
   LIVE_EMPLOYEES.forEach(e => {
     const o = document.createElement('option');
     o.value = e.id; o.textContent = e.name;
@@ -130,6 +138,9 @@ function renderEmployeeDropdown() {
     const pill = $('idpill'), txt = $('idtxt');
     if (id === (CONFIG.MANAGER_ID || 'MGR')) {
       txt.textContent = 'Manager Access';
+      pill.classList.add('show');
+    } else if (id === (CONFIG.HR_ID || 'HR')) {
+      txt.textContent = 'HR Access';
       pill.classList.add('show');
     } else if (tl) {
       txt.textContent = `${tl.name} Access`;
@@ -167,6 +178,12 @@ function renderEmployeeDropdown() {
       if (id === (CONFIG.MANAGER_ID || 'MGR')) {
         if (pw !== CONFIG.MANAGER_PW) throw new Error('Wrong manager password.');
         loginAsManager({ id: 'MGR', name: 'Manager', team: 'Management', role: 'manager' });
+        return;
+      }
+      // HR login
+      if (id === (CONFIG.HR_ID || 'HR')) {
+        if (pw !== CONFIG.HR_PW) throw new Error('Wrong HR password.');
+        loginAsHR({ id: 'HR', name: 'HR', team: 'Human Resources', role: 'hr' });
         return;
       }
       // Team Leader login — matched by whichever configured account
@@ -269,14 +286,45 @@ async function loginAsTL(emp, silent = false) {
   initTeamLeader();
 }
 
+// ── HR LOGIN ───────────────────────────────────────
+async function loginAsHR(emp, silent = false) {
+  MANAGER_MODE = false;
+  TL_MODE      = false;
+  HR_MODE      = true;
+  USER = emp;
+  sessionStorage.setItem(CONFIG.LS_SESSION, JSON.stringify({ ...emp, role: 'hr' }));
+
+  const av = $('hrAv');
+  if (av) av.textContent = 'HR';
+  const hn = $('hrName');
+  if (hn) hn.textContent = emp.name;
+  const ht = $('hrTeam');
+  if (ht) ht.textContent = 'HR Portal';
+
+  $('login').classList.add('gone');
+  $('app').classList.remove('on');
+  $('mgrPortal').classList.remove('on');
+  $('tlPortal')?.classList.remove('on');
+  $('hrPortal')?.classList.add('on');
+
+  if (!silent) toast('s', `Welcome, HR! 👋`, 'HR Portal');
+  if (!$('hrPortal')) {
+    console.error('[AUTH] #hrPortal not found in index.html — HR Portal cannot render. See humanresource.js bottom-of-file note for the markup needed.');
+    toast('e', 'HR Portal markup missing', 'index.html needs an #hrPortal container — ask to have it added.');
+    return;
+  }
+  initHR();
+}
+
 // ── LOGOUT ────────────────────────────────────────
 function logout() {
   sessionStorage.removeItem(CONFIG.LS_SESSION);
-  USER = null; ENTRIES = []; MANAGER_MODE = false; TL_MODE = false;
+  USER = null; ENTRIES = []; MANAGER_MODE = false; TL_MODE = false; HR_MODE = false;
 
   $('app').classList.remove('on');
   $('mgrPortal').classList.remove('on');
   $('tlPortal')?.classList.remove('on');
+  $('hrPortal')?.classList.remove('on');
   $('login').classList.remove('gone');
   $('lemp').value = ''; $('lpw').value = '';
   $('idpill').classList.remove('show');

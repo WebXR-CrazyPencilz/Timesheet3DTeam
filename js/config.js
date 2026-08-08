@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════
 
 const CONFIG = {
-  SHEETS_URL: 'https://script.google.com/macros/s/AKfycby4tWSXAi_Wkzqloh6qLi8DNY0nrX5bwFYAR6pJbSsHeIPPvpuPvBksfWNhrC-MPVQi-g/exec',
+  SHEETS_URL: 'https://script.google.com/macros/s/AKfycbzUq6T9_aDHffa3cjbDSB-ou93b8Q0i0hpStbbw0L3URoXr56VpHXrisBRNnHs8s7XpZA/exec',
 
   DEMO_MODE: false,
 
@@ -25,6 +25,11 @@ const CONFIG = {
     { id: 'TL1', pw: 'teamlead123', name: 'Team Leader 1' },
     { id: 'TL2', pw: 'teamlead456', name: 'Team Leader 2' },
   ],
+
+  // HR account — same pattern as MANAGER_ID/MANAGER_PW above (a
+  // single constant login, no sheet-backed account system).
+  HR_ID: 'HR',
+  HR_PW: 'hraccess2026',
 
   // ── App settings ──────────────────────────────
   CURRENCY:        '₹',
