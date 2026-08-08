@@ -73,7 +73,9 @@ async function renderManagerDashboard(content) {
     // by initManager() before renderManagerPortal() ever runs, so
     // nothing extra is needed for those.
     if (typeof loadProjectData === 'function')    await loadProjectData();
+    if (typeof loadClientData === 'function')      await loadClientData();
     if (typeof loadHistoricalData === 'function')  await loadHistoricalData();
+    if (typeof ensureSalaryDataLoaded === 'function') await ensureSalaryDataLoaded();
 
     // Total Views (shown on each candle) reuses gantt.js's own
     // per-project monthly aggregation and Views Delivered formula
@@ -111,10 +113,12 @@ async function renderManagerDashboard(content) {
     <div style="display:flex;gap:10px;align-items:stretch;">
       <div style="flex:0 0 330px;" id="dashNotLoggedWrap"></div>
       <div style="flex:0 0 600px;" id="dashTeamPerfWrap"></div>
+      <div style="flex:1;min-width:280px;" id="dashClientRollupWrap"></div>
     </div>`;
   renderDashboardKpiRow($('dashKpiWrap'));
   renderDashboardNotLoggedPanel($('dashNotLoggedWrap'));
   renderDashboardShell($('dashTeamPerfWrap'));
+  renderDashboardClientRollup($('dashClientRollupWrap'));
 }
 
 // ── CACHE BUILD (single pass, reused across every drill-down click) ──
@@ -535,4 +539,132 @@ function positionDashTooltip(evt) {
 
 function hideDashTooltip() {
   document.getElementById('dashTooltip')?.remove();
+}
+
+// ══════════════════════════════════════════════════════════════
+// CLIENT ROLLUP — per client, summed across every project that
+// client has: total Project Constant, total Employee Points spent
+// (Employee Cost — reuses calculateProjectCost() from
+// Client-Project.js exactly as every other Cost/Profit display in
+// this app does, not a new calculation), and total Completed Views.
+// Five projects under one client just add together — this is that
+// sum, grouped by client instead of shown per project.
+// ══════════════════════════════════════════════════════════════
+
+function renderDashboardClientRollup(wrap) {
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem;height:100%;box-sizing:border-box;display:flex;flex-direction:column;">
+      <div style="font-size:14px;font-weight:700;color:var(--txt1);margin-bottom:2px;">🏢 Clients Overview</div>
+      <div style="font-size:11px;color:var(--txt2);margin-bottom:12px;">Constant, Employee Points spent, and Completed Views — summed across each client's projects. Showing top 5 by Points Spent — scroll for more.</div>
+      <div id="dashClientRollupList" style="max-height:365px;overflow-y:auto;"><div class="mgr-loading"><div class="slot-spinner"></div><span>Loading…</span></div></div>
+    </div>`;
+
+  (async () => {
+    const clients  = (typeof CP_CLIENTS  !== 'undefined' ? CP_CLIENTS  : []);
+    const projects = (typeof CP_PROJECTS !== 'undefined' ? CP_PROJECTS : []);
+    const listEl = document.getElementById('dashClientRollupList');
+    if (!listEl) return;
+
+    if (!clients.length || !projects.length) {
+      listEl.innerHTML = `<div class="chart-empty">No clients/projects yet.</div>`;
+      return;
+    }
+
+    // One calculateProjectCost() call per project (same function every
+    // project card already uses), then grouped and summed by client.
+    let costs;
+    try {
+      costs = await Promise.all(projects.map(p => calculateProjectCost(p)));
+    } catch (ex) {
+      listEl.innerHTML = `<div class="slot-error">Failed to load: ${esc(ex.message)}</div>`;
+      return;
+    }
+    if (!document.body.contains(listEl)) return; // navigated away while this was loading
+
+    const rollup = {}; // clientId -> { constant, pointsSpent, completedViews, projectCount }
+    projects.forEach((p, i) => {
+      const cid = p.clientId;
+      if (!rollup[cid]) rollup[cid] = { constant: 0, pointsSpent: 0, completedViews: 0, projectCount: 0 };
+      rollup[cid].constant       += parseFloat(p.projectConstant) || 0;
+      rollup[cid].pointsSpent    += costs[i]?.totalCost || 0;
+      rollup[cid].completedViews += parseFloat(p.completedViews) || 0;
+      rollup[cid].projectCount   += 1;
+    });
+
+    const rows = clients
+      .map(c => ({ client: c, r: rollup[c.id] }))
+      .filter(x => x.r) // only clients that actually have at least one project
+      .sort((a, b) => b.r.pointsSpent - a.r.pointsSpent);
+
+    if (!rows.length) {
+      listEl.innerHTML = `<div class="chart-empty">No clients with projects yet.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = rows.map(({ client, r }) => `
+      <div class="dash-client-rollup-row" data-client-id="${esc(client.id)}" style="padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;border-radius:6px;transition:background .15s;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-size:12.5px;font-weight:700;color:var(--txt1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(client.name)}</div>
+          <div style="font-size:10px;color:var(--txt2);flex-shrink:0;">${r.projectCount} project${r.projectCount === 1 ? '' : 's'}</div>
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;">
+          <div>
+            <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Constant</div>
+            <div style="font-size:12px;font-weight:700;color:var(--txt1);">${esc(fmtCPConstant(r.constant))}</div>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Points Spent</div>
+            <div style="font-size:12px;font-weight:700;color:var(--a1);">${esc(fmtCPConstant(r.pointsSpent))}</div>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Completed Views</div>
+            <div style="font-size:12px;font-weight:700;color:#34d399;">${esc(r.completedViews.toFixed(1))}</div>
+          </div>
+        </div>
+      </div>`).join('');
+
+    // Each row is a button into the existing "Projects & Clients" tab,
+    // pre-filtered to that client. Reuses the exact same CP_PC_CLIENT
+    // state + renderProjectList() that the Clients sidebar there
+    // already sets on click (see renderClientsSidebarInto in
+    // Client-Project.js) — this is just a second entry point into that
+    // same selection, not a new client-filtering implementation.
+    listEl.querySelectorAll('.dash-client-rollup-row').forEach(row => {
+      row.addEventListener('mouseenter', () => row.style.background = 'var(--elevated)');
+      row.addEventListener('mouseleave', () => row.style.background = '');
+      row.addEventListener('click', () => goToClientInProjectsTab(row.dataset.clientId));
+    });
+  })();
+}
+
+// Jumps to the Projects & Clients tab with a given client pre-selected.
+// This widget currently only renders on the Manager Dashboard (Team
+// Leader has no Dashboard tab), so only the Manager branch is live —
+// the TL branch is kept so this keeps working unchanged if a Team
+// Leader Dashboard is ever added, since both shells already share the
+// same MGR_TAB/renderMgrTab vs TL_TAB/renderTLTab pattern.
+function goToClientInProjectsTab(clientId) {
+  CP_PC_CLIENT     = clientId || '';
+  CP_PC_PROJECT_ID = '';
+
+  if (typeof MANAGER_MODE !== 'undefined' && MANAGER_MODE && typeof MGR_TAB !== 'undefined') {
+    MGR_TAB = 'project';
+    const container = $('mgrApp');
+    container?.querySelectorAll('.mgr-tab').forEach(b => {
+      const active = b.dataset.tab === 'project';
+      b.style.color        = active ? 'var(--a1)' : 'var(--txt2)';
+      b.style.borderBottom = active ? '2px solid var(--a1)' : '2px solid transparent';
+    });
+    if (typeof renderMgrTab === 'function') renderMgrTab();
+  } else if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof TL_TAB !== 'undefined') {
+    TL_TAB = 'project';
+    const container = $('tlApp');
+    container?.querySelectorAll('.tl-tab').forEach(b => {
+      const active = b.dataset.tab === 'project';
+      b.style.color        = active ? 'var(--a1)' : 'var(--txt2)';
+      b.style.borderBottom = active ? '2px solid var(--a1)' : '2px solid transparent';
+    });
+    if (typeof renderTLTab === 'function') renderTLTab();
+  }
 }

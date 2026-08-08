@@ -52,7 +52,7 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 5;
+const MAX_DAYS_BACK = 2;
 
 function renderDateNav() {
   const nav = $('dateNav');
@@ -333,7 +333,7 @@ function renderEntryRow(slotKey, entryNum, entry) {
         <div class="swrap">
           <select class="fc" id="tsel-${id}">
             <option value="">— Task —</option>
-            ${['Pre-Work','Modelling & Texturing','lighting & Rendering', 'Web Development','2D FloorPlan', 'Editing & Grading', 'Unreal App Development', 'Training R&D' ].map(t =>
+            ${['Modelling & Texturing','lighting & Rendering', 'Web Development','2D FloorPlan', 'Editing & Grading', 'Unreal App Development', 'Training R&D' ].map(t =>
               `<option${t === task ? ' selected' : ''}>${t}</option>`
             ).join('')}
           </select>
