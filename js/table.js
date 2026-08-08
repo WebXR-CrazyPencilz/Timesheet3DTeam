@@ -7,6 +7,10 @@
 let tData = [], tSort = { col:'date', dir:-1 }, tPage = 1;
 const PAGE = CONFIG.PAGE_SIZE;
 
+// A day counts as overtime once its worked hours (all slots combined,
+// Leave excluded) pass this threshold.
+const OVERTIME_THRESHOLD_HOURS = 9;
+
 // Converts decimal hours to "1h 6m" display format
 function fmtHrsMin(h) {
   const totalMins = Math.round(Number(h) * 60);
@@ -15,6 +19,18 @@ function fmtHrsMin(h) {
   if (hrs === 0)  return `${mins}m`;
   if (mins === 0) return `${hrs}h`;
   return `${hrs}h ${mins}m`;
+}
+
+// Total worked hours per date across ALL of this employee's entries
+// (not just the current filtered/paginated view) — a day's overtime
+// status shouldn't change depending on which filter or page you're
+// looking at.
+function getDayTotalsMap() {
+  const map = {};
+  ENTRIES.filter(e => e.status !== 'Leave').forEach(e => {
+    map[e.date] = (map[e.date] || 0) + Number(e.hours || 0);
+  });
+  return map;
 }
 
 // ── STATS ─────────────────────────────────────────
@@ -100,9 +116,11 @@ function renderPage() {
   // Slot icons
   const slotIcon = { morning:'🌅', afternoon:'☀️', extended:'🌙' };
   const slotLabel = { morning:'Morning', afternoon:'Afternoon', extended:'Extended' };
+  const dayTotals = getDayTotalsMap();
 
   tbody.innerHTML = slice.map((e,i) => {
     const isLeave = e.status === 'Leave';
+    const isOvertimeDay = !isLeave && (dayTotals[e.date] || 0) > OVERTIME_THRESHOLD_HOURS;
     return `<tr class="${isLeave?'leave-row':''}">
       <td class="rn" data-label="#">${(tPage-1)*PAGE+i+1}</td>
       <td class="dcell" data-label="Date">${fmtDate(e.date)}<br><span style="font-size:.6rem;color:var(--muted)">${e.day||''}</span>${e.savedAt ? `<br><span style="font-size:.58rem;color:var(--muted);font-style:italic" title="Saved at ${e.savedAt}">🕐 ${e.savedAt}</span>` : ''}</td>
@@ -112,7 +130,7 @@ function renderPage() {
       <td data-label="Client">${isLeave ? '<span class="leave-badge-sm">🏖️ Leave</span>' : esc(e.client)}</td>
       <td data-label="Project">${isLeave ? '—' : esc(e.project)}</td>
       <td data-label="Task">${isLeave ? '—' : `<span class="tpill">${esc(e.task)}</span>`}</td>
-      <td class="hcell" data-label="Hours">${isLeave ? '—' : (e.hours ? fmtHrsMin(e.hours) : '—')}</td>
+      <td class="hcell" data-label="Hours">${isLeave ? '—' : (e.hours ? fmtHrsMin(e.hours) : '—')}${isOvertimeDay ? ` <span class="ot-badge" title="This day's total (${fmtHrsMin(dayTotals[e.date])}) is past ${fmtHrsMin(OVERTIME_THRESHOLD_HOURS)}" style="display:inline-block;font-size:.62rem;font-weight:700;color:#92400e;background:#fde68a;border-radius:5px;padding:1px 5px;margin-left:4px;vertical-align:middle;">⚡ OT +${fmtHrsMin(dayTotals[e.date] - OVERTIME_THRESHOLD_HOURS)}</span>` : ''}</td>
       <td class="ncell" data-label="Notes" title="${esc(e.notes)}">${isLeave ? '—' : esc(e.notes)}</td>
     </tr>`;
   }).join('');

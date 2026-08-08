@@ -583,6 +583,12 @@ function buildMyProjectReportHTML(projectName, proj, mode) {
 // ══════════════════════════════════════════════════════════════
 
 const MYATT_FULL_DAY_HOURS = 9; // must match FULL_DAY_HOURS in Client-Project.js's renderAttendanceGrid()
+// Same threshold/badge as the Timesheet table (table.js's
+// OVERTIME_THRESHOLD_HOURS) — kept as its own constant here since
+// this file doesn't share scope with table.js, but the value and
+// meaning must stay identical: a day's worked hours (Leave excluded)
+// past this counts as overtime.
+const MYATT_OVERTIME_THRESHOLD_HOURS = 9;
 const MYATT_MONTH_FLOOR = '2026-07'; // earliest month offered in the dropdown — matches CP_ATTEND_MONTH_FLOOR
 let MYATT_RANGE_MODE  = '15days'; // '15days' | 'month'
 let MYATT_MONTH       = '';       // 'YYYY-MM', used when MYATT_RANGE_MODE === 'month'
@@ -712,11 +718,14 @@ function myAttendBuildListRow(dateStr, status, isLast) {
     const permHtml = status.permissionHours > 0
       ? `<span style="margin-left:10px;font-size:11px;font-weight:700;color:#a78bfa;">Permission ${esc(fmtMyProjHours(status.permissionHours))}</span>`
       : '';
+    const otHtml = status.hours > MYATT_OVERTIME_THRESHOLD_HOURS
+      ? ` <span title="Past ${esc(fmtMyProjHours(MYATT_OVERTIME_THRESHOLD_HOURS))}" style="display:inline-block;font-size:.62rem;font-weight:700;color:#92400e;background:#fde68a;border-radius:5px;padding:1px 5px;margin-left:4px;vertical-align:middle;">⚡ OT +${esc(fmtMyProjHours(status.hours - MYATT_OVERTIME_THRESHOLD_HOURS))}</span>`
+      : '';
     return `
       <div style="${rowStyle}">
         <span style="flex:0 0 110px;font-size:12.5px;font-weight:700;color:var(--txt1);">${dateLabel}</span>
         <span style="flex:1;min-width:140px;font-size:12px;color:var(--txt2);">${timeLine}${leaveTag}</span>
-        <span style="font-size:13px;font-weight:800;color:#34d399;white-space:nowrap;">${esc(fmtMyProjHours(status.hours))}${permHtml}</span>
+        <span style="font-size:13px;font-weight:800;color:#34d399;white-space:nowrap;">${esc(fmtMyProjHours(status.hours))}${otHtml}${permHtml}</span>
       </div>`;
   }
   const STATUS_STYLE = {
