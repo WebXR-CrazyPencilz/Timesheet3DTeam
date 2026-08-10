@@ -87,6 +87,17 @@ async function apiSaveSlot(entry) {
   return { saved: result.saved, history: null };
 }
 
+// ── BIOMETRIC PUNCH (HR only) ─────────────────────
+async function apiSaveBiometricPunch(data) {
+  if (CONFIG.DEMO_MODE) {
+    return { saved: true }; // biometric reconciliation isn't part of the demo dataset
+  }
+  return sheetGET({
+    action: 'saveBiometricPunch',
+    data:   encodeURIComponent(JSON.stringify(data)),
+  });
+}
+
 // ── GET HISTORY (own entries — employee portal) ───
 async function apiGetHistory(uid) {
   function safeSort(arr) {

@@ -50,12 +50,22 @@ const STATUS_META = {
 // each has its own container div and its own "go back to the tab
 // shell" renderer. Derived from the same MANAGER_MODE/TL_MODE
 // session globals auth.js already maintains, no new auth logic.
+// This page is shared by the Manager, Team Leader, AND HR portals —
+// each has its own container div and its own "go back to the tab
+// shell" renderer. Derived from the same MANAGER_MODE/TL_MODE/HR_MODE
+// session globals auth.js already maintains, no new auth logic.
+// HR_MODE was missing here entirely — falling through to the
+// $('mgrApp') default meant clicking an employee inside HR Portal
+// rendered this page into the Manager portal's (invisible) container
+// instead of HR's own #hrApp, so it looked like nothing happened.
 function getEmpDetailContainer() {
   if (typeof TL_MODE !== 'undefined' && TL_MODE) return $('tlApp');
+  if (typeof HR_MODE !== 'undefined' && HR_MODE) return $('hrApp');
   return $('mgrApp');
 }
 function returnToPortalHome() {
   if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof renderTLPortal === 'function') { renderTLPortal(); return; }
+  if (typeof HR_MODE !== 'undefined' && HR_MODE && typeof renderHRPortal === 'function') { renderHRPortal(); return; }
   if (typeof renderManagerPortal === 'function') renderManagerPortal();
 }
 

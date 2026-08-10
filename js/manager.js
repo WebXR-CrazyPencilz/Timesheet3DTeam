@@ -560,7 +560,7 @@ function toLocalDateStr(d) {
 // entries slip through as if they were worked days (with 0 hours,
 // but still counted toward "Days" totals) — Holiday needs the same
 // exclusion Leave already gets, everywhere "worked" is computed.
-function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday'; }
+function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday' && e.status !== 'BiometricPunch'; }
 
 function calcHours(arr) { return arr.filter(isWorkedEntry).reduce((s,e)=>s+parseH(e.hours),0); }
 
