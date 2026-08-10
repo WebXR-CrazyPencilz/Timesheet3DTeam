@@ -286,6 +286,12 @@ function renderAttendanceGrid() {
   if (!wrap) return;
 
   const tod      = todayStr();
+  const isHR     = getCPRole() === 'hr';
+  // Sticky right-edge offsets for the summary columns, indexed left
+  // to right (Leave Days, Permission Hrs, Working Days, Total Hours,
+  // Overtime, [Biometric Hours if HR]). HR gets one extra column, so
+  // every offset before it needs to shift by 100px to make room.
+  const off = isHR ? [500, 400, 300, 200, 100, 0] : [400, 300, 200, 100, 0];
   // "Last 15 Days" is inherently a trailing window ending today by
   // construction, so capping it at today is a no-op there. But
   // "Month Wise" / "Start → End" are explicit choices — if HR is
@@ -325,19 +331,22 @@ function renderAttendanceGrid() {
               font-size:10px;white-space:nowrap;">${new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</th>`).join('')}
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;border-left:2px solid var(--border);
-              position:sticky;right:400px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Leave<br/>Days</th>
+              position:sticky;right:${off[0]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Leave<br/>Days</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Permission<br/>Hrs</th>
+              position:sticky;right:${off[1]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Permission<br/>Hrs</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Working<br/>Days</th>
+              position:sticky;right:${off[2]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Working<br/>Days</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Total<br/>Hours</th>
+              position:sticky;right:${off[3]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Total<br/>Hours</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Overtime</th>
+              position:sticky;right:${off[4]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Overtime</th>
+            ${isHR ? `<th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;
+              position:sticky;right:${off[5]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;" title="Total hours computed from recorded biometric punch times, not self-logged hours.">Biometric<br/>Hours</th>` : ''}
           </tr>
         </thead>
         <tbody>
@@ -348,12 +357,11 @@ function renderAttendanceGrid() {
             // filter), this only affects what shows in this grid.
             const activeEmployees = (CP_EMPLOYEES || []).filter(emp => emp.active !== false);
             if (!activeEmployees.length) {
-              return `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--txt2);">No employees found.</td></tr>`;
+              return `<tr><td colspan="${isHR ? 10 : 9}" style="text-align:center;padding:2rem;color:var(--txt2);">No employees found.</td></tr>`;
             }
             const FULL_DAY_HOURS = 9; // baseline used for "Permission Hours" and "Overtime" — adjust if your actual full working day differs
-            const isHR = getCPRole() === 'hr';
             return activeEmployees.map(emp => {
-              let leaveDays = 0, workingDays = 0, totalHours = 0, permissionHours = 0, overtimeHours = 0;
+              let leaveDays = 0, workingDays = 0, totalHours = 0, permissionHours = 0, overtimeHours = 0, biometricHours = 0;
 
               const dayCellsHtml = days.map(d => {
                 const dow = new Date(d + 'T00:00:00').getDay();
@@ -392,6 +400,17 @@ function renderAttendanceGrid() {
                 // where the whole cell becomes clickable to add/edit it.
                 if (status.biometric) {
                   cell += `<br/><span style="font-size:9px;color:#818cf8;font-weight:600;" title="Biometric punch (HR-recorded reference, not counted in hours)">🔒 ${status.biometric.in ? fmt12(status.biometric.in) : '—'} → ${status.biometric.out ? fmt12(status.biometric.out) : '—'}</span>`;
+                  // Duration purely from the recorded punch times —
+                  // independent of whatever hours the employee self-
+                  // logged (or didn't). Only counted when BOTH in and
+                  // out are present and out is after in; a same-slot
+                  // punch pair spanning midnight isn't expected here.
+                  if (status.biometric.in && status.biometric.out) {
+                    const [inH, inM]   = status.biometric.in.split(':').map(Number);
+                    const [outH, outM] = status.biometric.out.split(':').map(Number);
+                    const mins = (outH * 60 + outM) - (inH * 60 + inM);
+                    if (mins > 0) biometricHours += mins / 60;
+                  }
                 }
 
                 if (isHR) {
@@ -414,15 +433,17 @@ function renderAttendanceGrid() {
                 </td>
                 ${dayCellsHtml}
                 <td style="padding:8px 6px;text-align:center;color:${leaveDays > 0 ? '#fbbf24' : 'var(--txt2)'};font-weight:700;
-                  border-left:2px solid var(--border);position:sticky;right:400px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${leaveDays}</td>
+                  border-left:2px solid var(--border);position:sticky;right:${off[0]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${leaveDays}</td>
                 <td style="padding:8px 6px;text-align:center;color:${permissionHours > 0 ? '#a78bfa' : 'var(--txt2)'};font-weight:700;
-                  position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${permissionHours > 0 ? fh(permissionHours) : '—'}</td>
+                  position:sticky;right:${off[1]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${permissionHours > 0 ? fh(permissionHours) : '—'}</td>
                 <td style="padding:8px 6px;text-align:center;color:var(--txt1);font-weight:700;
-                  position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${workingDays}</td>
+                  position:sticky;right:${off[2]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${workingDays}</td>
                 <td style="padding:8px 6px;text-align:center;color:var(--a1);font-weight:700;
-                  position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${fh(totalHours)}</td>
+                  position:sticky;right:${off[3]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${fh(totalHours)}</td>
                 <td style="padding:8px 6px;text-align:center;color:${overtimeHours > 0 ? '#f87171' : 'var(--txt2)'};font-weight:700;
-                  position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${overtimeHours > 0 ? fh(overtimeHours) : '—'}</td>
+                  position:sticky;right:${off[4]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${overtimeHours > 0 ? fh(overtimeHours) : '—'}</td>
+                ${isHR ? `<td style="padding:8px 6px;text-align:center;color:${biometricHours > 0 ? '#818cf8' : 'var(--txt2)'};font-weight:700;
+                  position:sticky;right:${off[5]}px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${biometricHours > 0 ? fh(biometricHours) : '—'}</td>` : ''}
               </tr>`;
             }).join('');
           })()}
