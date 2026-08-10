@@ -688,6 +688,11 @@ function renderHRManageEmployeesTab(content) {
             <input type="text" class="hr-manage-newid" value="${esc(emp.id && !String(emp.id).startsWith('INACTIVE-') ? emp.id : '')}" placeholder="required to activate" style="width:100%;box-sizing:border-box;
               background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;"/>
           </div>
+          <div style="flex:0 0 100px;">
+            <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;" title="How many past days this employee can log/edit entries for. Default is 2 for everyone — raise it for someone who needs to catch up on a backlog.">Entry Window</label>
+            <input type="number" min="1" max="60" class="hr-manage-daysback" value="${emp.extendedDaysBack ? emp.extendedDaysBack : ''}" placeholder="2 (default)" style="width:100%;box-sizing:border-box;
+              background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;"/>
+          </div>
           <div style="flex:0 0 120px;">
             <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;">New Password</label>
             <input type="text" class="hr-manage-newpw" placeholder="optional" style="width:100%;box-sizing:border-box;
@@ -707,6 +712,7 @@ function renderHRManageEmployeesTab(content) {
       const status = row.querySelector('.hr-manage-status').value;
       const newId  = row.querySelector('.hr-manage-newid').value.trim();
       const newPw  = row.querySelector('.hr-manage-newpw').value.trim();
+      const extendedDaysBack = row.querySelector('.hr-manage-daysback').value.trim();
       const errEl  = row.querySelector('.hr-manage-err');
       const btn    = row.querySelector('.hr-manage-save');
       errEl.style.display = 'none';
@@ -714,7 +720,7 @@ function renderHRManageEmployeesTab(content) {
       btn.disabled = true; btn.textContent = 'Saving…';
       try {
         const result = await apiUpdateEmployeeRecord({
-          role: 'hr', originalName, team, status, newId, newPw,
+          role: 'hr', originalName, team, status, newId, newPw, extendedDaysBack,
         });
 
         // Reflect locally so the list doesn't need a full reload.
@@ -723,6 +729,7 @@ function renderHRManageEmployeesTab(content) {
         if (localEmp) {
           localEmp.team = team;
           localEmp.active = status === 'Active';
+          localEmp.extendedDaysBack = parseInt(extendedDaysBack, 10) || 0;
           if (result.name) localEmp.name = result.name;
         }
 

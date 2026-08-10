@@ -438,7 +438,7 @@ function renderAttendanceGrid() {
 
   wrap.querySelectorAll('.attend-biometric-cell').forEach(cell => {
     cell.addEventListener('click', () => {
-      openBiometricPunchModal(cell.dataset.empId, cell.dataset.empName, cell.dataset.date, cell.dataset.bioIn, cell.dataset.bioOut);
+      openHRCellMenu(cell, cell.dataset.empId, cell.dataset.empName, cell.dataset.date, cell.dataset.bioIn, cell.dataset.bioOut);
     });
   });
 
@@ -528,6 +528,143 @@ function openAttendanceCellMenu(cellEl, empId, empName, date) {
   // Defer binding the outside-click listener one tick so the click
   // that opened this menu doesn't immediately close it again.
   setTimeout(() => document.addEventListener('click', closeAttendanceCellMenuOnOutsideClick, true), 0);
+}
+
+// HR's version of the menu above — clicking ANY day cell (not just
+// "No Entry" ones, since Force Holiday and Biometric Punch both make
+// sense on a day that already has data too) offers Force Holiday
+// (per employee, per date — unlike Push Public Holiday which applies
+// to every active employee at once) and Biometric Punch.
+function openHRCellMenu(cellEl, empId, empName, date, bioIn, bioOut) {
+  closeAttendanceCellMenu();
+
+  const rect = cellEl.getBoundingClientRect();
+  const menu = document.createElement('div');
+  menu.id = 'attendCellMenu';
+  menu.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;z-index:10000;
+    background:var(--surface1);border:1px solid var(--border-md);border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:170px;`;
+  menu.innerHTML = `
+    <button id="attendMenuForceEntryHR" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">⚡ Force Entry</button>
+    <button id="attendMenuForceLeaveHR" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">🟠 Force Leave</button>
+    <button id="attendMenuForceHoliday" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">🎉 Force Holiday</button>
+    <button id="attendMenuBiometric" style="text-align:left;background:none;border:none;color:var(--txt1);
+      padding:8px 10px;border-radius:7px;font-size:12.5px;cursor:pointer;">🔒 Biometric Punch</button>
+  `;
+  document.body.appendChild(menu);
+  menu.querySelectorAll('button').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'var(--surface2)');
+    b.addEventListener('mouseleave', () => b.style.background = 'none');
+  });
+
+  // Same Force Entry / Force Leave Manager and Team Leader already
+  // get from openAttendanceCellMenu — HR gets full parity here, not
+  // a reduced menu, plus the two HR-specific actions below.
+  menu.querySelector('#attendMenuForceEntryHR').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    if (typeof openForceEntry !== 'function') { toast?.('e', 'Force Entry module not loaded'); return; }
+    openForceEntry(empId, empName, date, () => {
+      if (typeof renderHRPortal === 'function') renderHRPortal();
+    }, 'hrApp');
+  });
+
+  menu.querySelector('#attendMenuForceLeaveHR').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    openAttendanceForceLeaveModal(empId, empName, date);
+  });
+
+  menu.querySelector('#attendMenuForceHoliday').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    openForceHolidayModal(empId, empName, date);
+  });
+
+  menu.querySelector('#attendMenuBiometric').addEventListener('click', () => {
+    closeAttendanceCellMenu();
+    openBiometricPunchModal(empId, empName, date, bioIn, bioOut);
+  });
+
+  setTimeout(() => document.addEventListener('click', closeAttendanceCellMenuOnOutsideClick, true), 0);
+}
+
+// Force Holiday — HR only, ONE employee on ONE date, unlike Push
+// Public Holiday (openBulkHolidayModal) which applies to every active
+// employee at once. Reuses the exact same write shape (status:
+// 'Holiday', slot:'extended') so getEmpDayStatus/the grid/the
+// Public Holiday backend lock in saveSlot all treat it identically —
+// this is just a narrower-scoped entry point into the same feature,
+// not a second implementation. Unlike the bulk version, this
+// explicitly OVERWRITES whatever was there before (that's the point
+// of "force") rather than skipping employees who already have an
+// entry that day.
+function openForceHolidayModal(empId, empName, date) {
+  const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9999;`;
+  overlay.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border-md);border-radius:14px;padding:1.25rem;width:360px;max-width:92vw;">
+      <div style="font-weight:700;font-size:15px;color:var(--txt1);margin-bottom:2px;">🎉 Force Holiday</div>
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:12px;">${esc(empName)} · ${dateLabel}. Only this employee, only this date — overwrites whatever's already logged that day.</div>
+      <label style="font-size:11px;color:var(--txt2);font-weight:600;display:block;margin-bottom:4px;">
+        Holiday Name <span style="color:#f87171;">(required)</span>
+      </label>
+      <input type="text" id="fhName" placeholder="e.g. Approved festival leave" style="width:100%;box-sizing:border-box;
+        background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--txt1);
+        font-size:12.5px;padding:8px 10px;"/>
+      <div id="fhErr" style="display:none;font-size:11.5px;color:#f87171;margin-top:8px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button id="fhCancel" style="background:none;border:1px solid var(--border-md);
+          color:var(--txt2);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;">Cancel</button>
+        <button id="fhSubmit" style="background:#fbbf24;border:none;
+          color:#1a1a2e;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;">Apply Holiday</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#fhCancel').addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#fhSubmit').addEventListener('click', async () => {
+    const name  = overlay.querySelector('#fhName').value.trim();
+    const errEl = overlay.querySelector('#fhErr');
+    errEl.style.display = 'none';
+
+    if (!name) { errEl.textContent = 'Holiday name is required.'; errEl.style.display = 'block'; return; }
+    if (typeof buildManagerEntry !== 'function' || typeof apiSaveSlot !== 'function') {
+      toast?.('e', 'Required module not loaded');
+      return;
+    }
+
+    const submitBtn = overlay.querySelector('#fhSubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Applying…';
+
+    try {
+      const fields = { slot: 'extended', client: 'Holiday', clientId: '', project: 'Holiday', projectId: '', task: name, hours: 0, status: 'Holiday', tag: 'FORCE_HOLIDAY' };
+      const entry  = buildManagerEntry(empId, empName, date, fields, name);
+      await apiSaveSlot(entry);
+
+      for (let i = CP_TIMESHEET_DATA.length - 1; i >= 0; i--) {
+        const e = CP_TIMESHEET_DATA[i];
+        if (e.empId === empId && e.date === date) CP_TIMESHEET_DATA.splice(i, 1);
+      }
+      CP_TIMESHEET_DATA.push({ ...entry, empId, empName, status: 'Holiday', date, hours: '0h' });
+
+      toast?.('s', 'Holiday applied', `${empName} · ${dateLabel}`);
+      overlay.remove();
+      renderAttendanceGrid();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Apply Holiday';
+      toast?.('e', 'Failed to save', err.message);
+    }
+  });
 }
 
 function openAttendanceForceLeaveModal(empId, empName, date) {

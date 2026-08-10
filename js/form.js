@@ -52,14 +52,25 @@ function initForm() {
 // ── DATE NAVIGATION ───────────────────────────────
 // Maximum days back from today that can be logged/edited.
 // 0 = today, 1 = yesterday, 2 = day before yesterday.
-const MAX_DAYS_BACK = 2;
+// Was a fixed constant — now per-employee: defaults to 2, but HR can
+// grant an individual employee a longer window (e.g. 10 days) from
+// the Manage Employees tab, to let them catch up on a backlog of
+// missed entries without opening it up for everyone. Read from
+// USER.extendedDaysBack (set at login from the Employees sheet) —
+// falls back to the same default of 2 if unset/not a valid number.
+function getMaxDaysBack() {
+  const raw = typeof USER !== 'undefined' && USER ? USER.extendedDaysBack : null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 2;
+}
 
 function renderDateNav() {
   const nav = $('dateNav');
   if (!nav) return;
 
+  const maxDaysBack = getMaxDaysBack();
   const days = [];
-  for (let i = MAX_DAYS_BACK; i >= 0; i--) {
+  for (let i = maxDaysBack; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     days.push(fmtDateObj(d));
@@ -87,7 +98,7 @@ function renderDateNav() {
 
 function switchDay(date) {
   if (!isWithinEditableRange(date)) {
-    toast('e', 'Date not editable', `You can only log entries for today and the past ${MAX_DAYS_BACK} days.`);
+    toast('e', 'Date not editable', `You can only log entries for today and the past ${getMaxDaysBack()} days.`);
     return;
   }
   CURRENT_DATE = date;
@@ -95,12 +106,12 @@ function switchDay(date) {
   loadAndRenderDay(date);   // always fetch fresh — no cache
 }
 
-// Returns true if `date` (YYYY-MM-DD) is within today..today-MAX_DAYS_BACK
+// Returns true if `date` (YYYY-MM-DD) is within today..today-maxDaysBack
 function isWithinEditableRange(date) {
   const today    = new Date(todayStr() + 'T00:00:00');
   const target   = new Date(date + 'T00:00:00');
   const diffDays = Math.round((today - target) / 86400000);
-  return diffDays >= 0 && diffDays <= MAX_DAYS_BACK;
+  return diffDays >= 0 && diffDays <= getMaxDaysBack();
 }
 
 // ── LOAD DAY (always fresh from Sheet) ────────────

@@ -45,6 +45,9 @@ function getEnteredByInfo() {
   if (typeof TL_MODE !== 'undefined' && TL_MODE) {
     return { name: (typeof USER !== 'undefined' && USER?.name) || 'Team Leader', role: 'Team Leader' };
   }
+  if (typeof HR_MODE !== 'undefined' && HR_MODE) {
+    return { name: (typeof USER !== 'undefined' && USER?.name) || 'HR', role: 'HR' };
+  }
   return { name: (typeof USER !== 'undefined' && USER?.name) || 'Manager', role: 'Manager' };
 }
 
@@ -57,9 +60,15 @@ function openForceEntry(empId, empName, dateStr, onDone) {
   FE_DATE      = dateStr;
   FE_RETURN_TO = typeof onDone === 'function' ? onDone : null;
 
-  // Shared with emp-detail.js: this page is used from both the
-  // Manager and Team Leader portals, each with its own container.
-  const container = (typeof TL_MODE !== 'undefined' && TL_MODE) ? $('tlApp') : $('mgrApp');
+  // Shared with emp-detail.js: this page is used from the Manager,
+  // Team Leader, AND HR portals, each with its own container. HR_MODE
+  // was missing here originally — falling through to $('mgrApp')
+  // meant triggering Force Entry from HR Portal rendered this page
+  // into Manager's (invisible, inactive) container instead of HR's
+  // own #hrApp.
+  const container = (typeof TL_MODE !== 'undefined' && TL_MODE) ? $('tlApp')
+    : (typeof HR_MODE !== 'undefined' && HR_MODE) ? $('hrApp')
+    : $('mgrApp');
   if (!container) return;
 
   const enteredBy = getEnteredByInfo();
