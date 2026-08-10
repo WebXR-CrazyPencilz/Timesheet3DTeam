@@ -5,7 +5,7 @@
 // Mirrors form.js's UI/validation for Morning + Afternoon sessions
 // (Extended Hours is intentionally not offered here), but is saved
 // by a Manager/Team Leader on the employee's behalf, with a
-// permanent audit trail (Entered By, Role, Reason, Manager Notes).
+// permanent audit trail (Entered By, Role, Reason).
 //
 // This is a completely separate module:
 //   • form.js is NOT modified.
@@ -112,11 +112,6 @@ function openForceEntry(empId, empName, dateStr, onDone) {
           <label class="flabel">Reason <span class="req">*</span></label>
           <textarea class="fc ta" id="feReason" rows="2" maxlength="200"
             placeholder="Why is this being entered manually? e.g. Employee forgot to submit timesheet."></textarea>
-        </div>
-        <div class="fg" style="margin-top:.6rem;">
-          <label class="flabel">Manager Notes <span class="req">*</span></label>
-          <textarea class="fc ta" id="feManagerNotes" rows="2" maxlength="300"
-            placeholder="Any additional context for the audit trail…"></textarea>
         </div>
       </div>
 
@@ -353,9 +348,7 @@ function updateFeNotesCount(id) {
 async function saveForceEntryAll() {
   const btn      = $('feSaveAllBtn');
   const reasonEl = $('feReason');
-  const notesEl  = $('feManagerNotes');
   const reason   = reasonEl.value.trim();
-  const managerNotes = notesEl.value.trim();
 
   if (!reason) {
     toast?.('e', 'Reason required', 'Explain why this entry is being force-entered.');
@@ -363,13 +356,6 @@ async function saveForceEntryAll() {
     return;
   }
   reasonEl.classList.remove('bad');
-
-  if (!managerNotes) {
-    toast?.('e', 'Manager notes required');
-    notesEl.classList.add('bad'); notesEl.focus();
-    return;
-  }
-  notesEl.classList.remove('bad');
 
   const toMinutes = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
   const collected = [];
@@ -431,7 +417,7 @@ async function saveForceEntryAll() {
         clientId:  csel.value, client:  cOpt?.dataset?.n || cOpt?.text || '',
         projectId: psel.value, project: pOpt?.dataset?.n || pOpt?.text || '',
         task: tsel.value, notes: notesVal,
-      }, reason, managerNotes));
+      }, reason));
     }
   }
 
@@ -460,11 +446,11 @@ async function saveForceEntryAll() {
 // Build the saved entry using the exact same object shape form.js
 // already writes via apiSaveSlot — no backend/schema changes needed.
 // Audit fields (Employee ID/Name, Entry Date, Entered By, Role,
-// Timestamp, Force Entry flag, Reason, Manager Notes) are attached
+// Timestamp, Force Entry flag, Reason) are attached
 // directly on the entry AND embedded as a readable tag inside the
 // notes field, so the audit trail survives even if the Sheet only
 // keeps the columns it already has.
-function buildForceEntry(slotKey, entryNum, fields, reason, managerNotes) {
+function buildForceEntry(slotKey, entryNum, fields, reason) {
   const enteredBy = getEnteredByInfo();
   const now = new Date();
   const savedAt = now.toLocaleString('en-IN', {
@@ -473,7 +459,7 @@ function buildForceEntry(slotKey, entryNum, fields, reason, managerNotes) {
   });
 
   const tag = `[FORCE_ENTRY by ${enteredBy.name} (${enteredBy.role}) · ${savedAt}] `
-    + `Reason: ${reason} | Manager Notes: ${managerNotes} | Employee notes: ${fields.notes}`;
+    + `Reason: ${reason} | Employee notes: ${fields.notes}`;
 
   return {
     id:      `${FE_EMP.id}-${FE_DATE}-${slotKey}-${entryNum}`,
@@ -503,6 +489,5 @@ function buildForceEntry(slotKey, entryNum, fields, reason, managerNotes) {
     entryDate:      FE_DATE,
     timestamp:      savedAt,
     reason,
-    managerNotes,
   };
 }
