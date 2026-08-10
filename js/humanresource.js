@@ -124,49 +124,273 @@ function renderHRTab() {
 }
 
 // ══════════════════════════════════════════════════
-// DASHBOARD — reuses dashboard.js's Not Logged In panel and Team
-// Performance chart as-is (both are pure hours/attendance data, no
-// financials — the same reasoning Project Contribution above
-// follows). No new fetch beyond what initHR() already loaded, plus
-// the same loadProjectData/loadHistoricalData calls
-// renderManagerDashboard makes, so the Team Performance chart's
-// drill-down and per-project attribution work identically to the
-// Manager's. Clients Overview and the KPI cards are intentionally
-// left out — they're financial/placeholder widgets outside HR's
-// scope. The employee headcount card below is this file's own,
-// built from CP_EMPLOYEES the way Add Employee's team list already
-// is.
+// DASHBOARD — reuses dashboard.js's Not Logged In panel as-is (pure
+// attendance data, no financials). The employees-per-month chart and
+// headcount card below are this file's own, built straight from
+// CP_TIMESHEET_DATA/CP_EMPLOYEES (already loaded, no new fetch) —
+// headcount rather than hours/views is a better fit for HR than
+// reusing Manager's Team Performance chart. Clients Overview and the
+// KPI cards are intentionally left out — financial/placeholder
+// widgets outside HR's scope.
 // ══════════════════════════════════════════════════
 async function renderHRDashboard(content) {
-  if (typeof ensureDashStyles === 'function') ensureDashStyles();
-
   content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading dashboard…</span></div>`;
 
-  try {
-    if (typeof loadProjectData === 'function')    await loadProjectData();
-    if (typeof loadHistoricalData === 'function') await loadHistoricalData();
-    if (typeof loadProjects === 'function' && (typeof GANTT_PROJECTS === 'undefined' || !GANTT_PROJECTS.length)) {
-      await loadProjects();
-    }
-  } catch (err) {
-    // Team Performance chart still works off CP_TIMESHEET_DATA alone
-    // if these fail — Views-per-candle just won't show, same
-    // graceful fallback dashboard.js already has.
-    console.warn('[HR dashboard] optional project data failed to load:', err.message);
-  }
-
-  if (typeof buildTeamPerformanceCache === 'function') buildTeamPerformanceCache();
-
   content.innerHTML = `
+    <div id="hrEotmWrap" style="margin-bottom:22px;"></div>
     <div id="hrHeadcountWrap" style="margin-bottom:22px;"></div>
     <div style="display:flex;gap:10px;align-items:stretch;">
       <div style="flex:0 0 330px;" id="hrNotLoggedWrap"></div>
       <div style="flex:1;min-width:280px;" id="hrTeamPerfWrap"></div>
     </div>`;
 
+  renderHREmployeeOfMonth($('hrEotmWrap'));
   renderHRHeadcountRow($('hrHeadcountWrap'));
   if (typeof renderDashboardNotLoggedPanel === 'function') renderDashboardNotLoggedPanel($('hrNotLoggedWrap'));
-  if (typeof renderDashboardShell === 'function') renderDashboardShell($('hrTeamPerfWrap'));
+  renderHREmployeeCountChart($('hrTeamPerfWrap'));
+}
+
+// ── EMPLOYEE OF THE MONTH — HR-only ───────────────
+// Scored on four criteria for the current calendar month, built
+// straight from CP_TIMESHEET_DATA/CP_EMPLOYEES (already loaded, no
+// new fetch):
+//   1. Projects handled — distinct projects worked on (more = better)
+//   2. Attendance — FULL working days logged, i.e. days that reach
+//      at least HR_EOTM_FULL_DAY_THRESHOLD_HOURS (more = better).
+//      A day with only a couple hours logged does NOT count as
+//      attendance here — otherwise someone who logs short partial
+//      days every day would score as "perfect attendance" purely for
+//      showing up briefly, while also scoring "zero overtime" for
+//      the same reason. Short days are tracked separately
+//      (shortDays) and actively hurt the score below instead.
+//   3. Overtime — days that crossed the 9h threshold (fewer = better,
+//      same OVERTIME_THRESHOLD_HOURS table.js already uses for its OT
+//      badge, so "overtime" means the same thing here as it does on
+//      the employee's own timesheet)
+//   4. Leaves — days marked Leave this month (fewer = better)
+// Each metric is normalized 0–1 against the best value among that
+// month's active employees, then averaged equally across all four —
+// no single criterion can dominate the others. Only employees with
+// at least one worked entry this month are eligible, so a totally
+// inactive employee can't "win" by default through having zero
+// overtime and zero leaves.
+const HR_EOTM_OVERTIME_THRESHOLD_HOURS  = 9;
+// A full day is exactly the standard 9h — below that is a short day
+// (doesn't count toward attendance), above that is overtime (already
+// penalized separately via overtimeDays). So a day under 9h and a
+// day over 9h are both "problems" in different ways: short days lose
+// attendance credit here, long days lose points via overtimeDays.
+const HR_EOTM_FULL_DAY_THRESHOLD_HOURS = 9;
+
+function buildHREotmStats(monthKey, onlyWithActivity = true) {
+  const employees = (typeof CP_EMPLOYEES !== 'undefined' ? CP_EMPLOYEES : HR_EMPLOYEES).filter(e => e.active !== false);
+  const entries = (typeof CP_TIMESHEET_DATA !== 'undefined' ? CP_TIMESHEET_DATA : HR_DATA)
+    .filter(e => e.date && e.date.startsWith(monthKey));
+
+  const stats = employees.map(emp => {
+    const own = entries.filter(e => e.empId === emp.id);
+    const worked = own.filter(e => e.status !== 'Leave');
+
+    const projects = new Set(worked.map(e => e.project).filter(Boolean));
+    const dayTotals = {};
+    worked.forEach(e => { dayTotals[e.date] = (dayTotals[e.date] || 0) + (parseFloat(e.hours) || 0); });
+    const dayHours = Object.values(dayTotals);
+    const workingDays = dayHours.filter(h => h >= HR_EOTM_FULL_DAY_THRESHOLD_HOURS).length;
+    const shortDays = dayHours.length - workingDays;
+    const overtimeDays = dayHours.filter(h => h > HR_EOTM_OVERTIME_THRESHOLD_HOURS).length;
+    const leaveDays = new Set(own.filter(e => e.status === 'Leave').map(e => e.date)).size;
+
+    return { emp, projects: projects.size, workingDays, shortDays, overtimeDays, leaveDays };
+  });
+
+  return onlyWithActivity ? stats.filter(s => s.workingDays > 0) : stats;
+}
+
+// Scores every stat row that has activity (workingDays > 0) against
+// the best values among that active subset — a zero-activity
+// employee never gets scored (score: null), so it can't rank ahead
+// of someone who actually worked just by having zero overtime/leaves
+// by default. Zero-activity rows sort to the bottom.
+function scoreHREotm(stats) {
+  const active = stats.filter(s => s.workingDays > 0);
+  const maxProjects = Math.max(1, ...active.map(s => s.projects));
+  const maxDays      = Math.max(1, ...active.map(s => s.workingDays));
+  const maxOvertime  = Math.max(1, ...active.map(s => s.overtimeDays));
+  const maxLeaves    = Math.max(1, ...active.map(s => s.leaveDays));
+
+  return stats.map(s => {
+    if (s.workingDays === 0) return { ...s, score: null };
+    const projectsScore = s.projects / maxProjects;
+    const attendanceScore = s.workingDays / maxDays;
+    const overtimeScore = 1 - (s.overtimeDays / maxOvertime);
+    const leaveScore = 1 - (s.leaveDays / maxLeaves);
+    const score = (projectsScore + attendanceScore + overtimeScore + leaveScore) / 4;
+    return { ...s, score };
+  }).sort((a, b) => {
+    if (a.score === null && b.score === null) return (a.emp.name || '').localeCompare(b.emp.name || '');
+    if (a.score === null) return 1;
+    if (b.score === null) return -1;
+    return b.score - a.score || b.workingDays - a.workingDays;
+  });
+}
+
+function renderHREmployeeOfMonth(wrap) {
+  if (!wrap) return;
+  const monthKey = todayStr().slice(0, 7);
+  const monthLabel = new Date(monthKey + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  const stats = buildHREotmStats(monthKey);
+  const ranked = scoreHREotm(stats);
+
+  if (!ranked.length) {
+    wrap.innerHTML = `
+      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1.4rem;max-width:680px;">
+        <div style="font-size:14px;font-weight:700;color:var(--txt1);">🏆 Employee of the Month — ${esc(monthLabel)}</div>
+        <div style="font-size:12px;color:var(--txt2);margin-top:6px;">No logged hours yet this month.</div>
+      </div>`;
+    return;
+  }
+
+  const winner = ranked[0];
+  const runnersUp = ranked.slice(1, 4);
+
+  const metricChip = (label, value, good) => `
+    <div style="text-align:center;">
+      <div style="font-size:15px;font-weight:700;color:${good ? '#34d399' : 'var(--txt1)'};">${value}</div>
+      <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;margin-top:1px;">${label}</div>
+    </div>`;
+
+  wrap.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;max-width:680px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--txt1);">🏆 Employee of the Month — ${esc(monthLabel)}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-top:1px;">Scored on projects handled, attendance, overtime, and leaves.</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:10px;padding:10px 14px;
+        background:var(--elevated);border-radius:10px;">
+        <div style="display:flex;align-items:center;gap:10px;min-width:160px;">
+          <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#fb923c);
+            display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;flex-shrink:0;">
+            ${esc((winner.emp.name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase())}
+          </div>
+          <div>
+            <div style="font-size:13.5px;font-weight:700;color:var(--txt1);">${esc(winner.emp.name)}</div>
+            <div style="font-size:10.5px;color:var(--txt2);">${esc(winner.emp.id)} · ${esc(winner.emp.team || '—')}</div>
+          </div>
+        </div>
+        ${metricChip('Projects', winner.projects, true)}
+        ${metricChip('Full Days', winner.workingDays, true)}
+        ${metricChip('Overtime Days', winner.overtimeDays, winner.overtimeDays === 0)}
+        ${metricChip('Leave Days', winner.leaveDays, winner.leaveDays === 0)}
+      </div>
+      <div style="font-size:10px;color:var(--txt2);margin-top:6px;">Full Day = ${HR_EOTM_FULL_DAY_THRESHOLD_HOURS}h logged that day. Under that doesn't count toward attendance; over that counts as overtime.</div>
+      ${runnersUp.length ? `
+        <div style="margin-top:10px;">
+          <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px;">Runners-up</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${runnersUp.map((r, i) => `
+              <div style="display:flex;align-items:center;gap:6px;background:var(--elevated);border-radius:8px;padding:4px 10px;">
+                <span style="font-size:10.5px;color:var(--muted);font-weight:700;">#${i + 2}</span>
+                <span style="font-size:11px;color:var(--txt1);font-weight:600;">${esc(r.emp.name)}</span>
+                <span style="font-size:10px;color:var(--txt2);">${r.projects} proj · ${r.workingDays}d · ${r.overtimeDays} OT · ${r.leaveDays} leave</span>
+              </div>`).join('')}
+          </div>
+        </div>` : ''}
+    </div>`;
+}
+
+// ── EMPLOYEES-PER-MONTH CHART ─────────────────────
+// HR's own version of the Team Performance chart — same card shell
+// and bar-chart look, but plots distinct employees who logged any
+// entry that month (current year) instead of hours/views. Built
+// straight from CP_TIMESHEET_DATA (already loaded), no new fetch.
+// ── EMPLOYEE LEADERBOARD (by month) ───────────────
+// Lists every active employee for a chosen month, ranked by the same
+// four-criteria score as Employee of the Month above (reuses
+// buildHREotmStats/scoreHREotm directly — one scoring system, two
+// views). Replaces the old "count of active employees per month" bar
+// chart with something HR can actually act on: who's pulling their
+// weight this month, and who isn't showing any activity at all.
+let HR_LEADERBOARD_MONTH = todayStr().slice(0, 7);
+
+function renderHREmployeeCountChart(wrap) {
+  if (!wrap) return;
+  const year = new Date().getFullYear();
+  const monthOptions = Array.from({ length: 12 }, (_, i) => {
+    const key = `${year}-${String(i + 1).padStart(2, '0')}`;
+    const label = new Date(key + '-01').toLocaleDateString('en-IN', { month: 'long' });
+    return { key, label };
+  });
+
+  wrap.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1.4rem;height:100%;box-sizing:border-box;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:1.1rem;">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--txt1);">👥 Employee Leaderboard</div>
+          <div style="font-size:12px;color:var(--txt2);">Ranked by projects handled, attendance, overtime, and leaves.</div>
+        </div>
+        <select id="hrLeaderboardMonth" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+          color:var(--txt1);font-size:12px;padding:6px 10px;cursor:pointer;">
+          ${monthOptions.map(m => `<option value="${m.key}" ${m.key === HR_LEADERBOARD_MONTH ? 'selected' : ''}>${m.label} ${year}</option>`).join('')}
+        </select>
+      </div>
+      <div id="hrLeaderboardChart"></div>
+    </div>`;
+
+  $('hrLeaderboardMonth').addEventListener('change', e => {
+    HR_LEADERBOARD_MONTH = e.target.value;
+    renderHRLeaderboardList();
+  });
+
+  renderHRLeaderboardList();
+}
+
+// One bar per employee, height = that employee's score for the
+// selected month (0 for "no activity" employees, same list the table
+// below shows, same order — this is just the visual form of it).
+function renderHRLeaderboardChart(ranked) {
+  const chartEl = $('hrLeaderboardChart');
+  if (!chartEl) return;
+
+  if (!ranked.length) { chartEl.innerHTML = `<div class="chart-empty">No active employees.</div>`; return; }
+
+  const top = ranked[0];
+  const topJustification = top.score !== null
+    ? `🏆 <b>${esc(top.emp.name)}</b> leads this month — ${top.projects} project${top.projects === 1 ? '' : 's'},
+       ${top.workingDays} full day${top.workingDays === 1 ? '' : 's'} (9h+), ${top.overtimeDays} overtime day${top.overtimeDays === 1 ? '' : 's'},
+       ${top.leaveDays} leave day${top.leaveDays === 1 ? '' : 's'}.`
+    : '';
+
+  chartEl.innerHTML = `
+    ${topJustification ? `<div style="font-size:11.5px;color:var(--txt2);margin-bottom:14px;">${topJustification}</div>` : ''}
+    <div style="display:flex;align-items:flex-end;justify-content:${ranked.length > 18 ? 'flex-start' : 'space-evenly'};
+      gap:18px;height:280px;padding:12px 4px 0;${ranked.length > 18 ? 'overflow-x:auto;' : ''}">
+      ${ranked.map((r, i) => {
+        const pct = r.score !== null ? Math.round(r.score * 100) : 0;
+        const barColor = i === 0 && r.score !== null ? '#fbbf24' : 'var(--a1)';
+        const firstName = (r.emp.name || '').split(' ')[0];
+        const tooltip = r.score !== null
+          ? `${r.emp.name} — ${pct}% | ${r.projects} projects · ${r.workingDays} full days · ${r.overtimeDays} overtime · ${r.leaveDays} leaves`
+          : `${r.emp.name} — no activity this month`;
+        return `
+          <div style="flex:1 1 0;min-width:22px;max-width:38px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+            <div style="font-size:10px;font-weight:700;color:var(--txt1);margin-bottom:4px;">${r.score !== null ? pct : '—'}</div>
+            <div style="width:100%;background:${barColor};border-radius:3px 3px 1px 1px;
+              height:${r.score !== null ? Math.max(3, pct * 2.2) : 2}px;transition:height .3s ease;"
+              title="${esc(tooltip)}"></div>
+            <div style="font-size:9.5px;color:var(--txt2);margin-top:6px;white-space:nowrap;overflow:hidden;
+              text-overflow:ellipsis;max-width:38px;" title="${esc(tooltip)}">${esc(firstName)}</div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function renderHRLeaderboardList() {
+  const stats = buildHREotmStats(HR_LEADERBOARD_MONTH, false); // false = include zero-activity employees too
+  const ranked = scoreHREotm(stats);
+  renderHRLeaderboardChart(ranked);
 }
 
 // Simple headcount strip — active vs inactive, and a per-team count.
@@ -178,14 +402,6 @@ function renderHRHeadcountRow(wrap) {
   const active   = employees.filter(e => e.active !== false).length;
   const inactive = employees.length - active;
 
-  const byTeam = {};
-  employees.forEach(e => {
-    if (e.active === false) return;
-    const t = e.team || 'Unassigned';
-    byTeam[t] = (byTeam[t] || 0) + 1;
-  });
-  const teamRows = Object.entries(byTeam).sort((a, b) => b[1] - a[1]);
-
   wrap.innerHTML = `
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;min-width:140px;">
@@ -195,16 +411,6 @@ function renderHRHeadcountRow(wrap) {
       <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;min-width:140px;">
         <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Inactive</div>
         <div style="font-size:22px;font-weight:700;color:var(--txt1);margin-top:2px;">${inactive}</div>
-      </div>
-      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1rem 1.4rem;flex:1;min-width:260px;">
-        <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px;">By Team</div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-          ${teamRows.map(([team, count]) => `
-            <div style="display:flex;align-items:baseline;gap:6px;">
-              <span style="font-size:14px;font-weight:700;color:var(--a1);">${count}</span>
-              <span style="font-size:11.5px;color:var(--txt2);">${esc(team)}</span>
-            </div>`).join('') || '<span style="font-size:11.5px;color:var(--txt2);">No employees yet.</span>'}
-        </div>
       </div>
     </div>`;
 }

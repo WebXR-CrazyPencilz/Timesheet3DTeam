@@ -3257,7 +3257,10 @@ function renderAttendanceGrid() {
                 let cell, clickable = false;
                 if (status.kind === 'worked') {
                   const halfDayLeave = status.hasLeave;
-                  cell = `<span style="color:#34d399;font-weight:700;" title="In ${fmt12(status.checkIn)} → Out ${fmt12(status.checkOut)}${halfDayLeave ? ' (half-day leave also recorded this date)' : ''}">${fh(status.hours)}${halfDayLeave ? ' <span style="color:#fbbf24;" title="Half-day leave">🏖</span>' : ''}</span>`;
+                  const timesLine = (status.checkIn || status.checkOut)
+                    ? `<br/><span style="font-size:9px;color:var(--txt2);font-weight:500;">${status.checkIn ? fmt12(status.checkIn) : '—'} → ${status.checkOut ? fmt12(status.checkOut) : '—'}</span>`
+                    : '';
+                  cell = `<span style="color:#34d399;font-weight:700;" title="In ${fmt12(status.checkIn)} → Out ${fmt12(status.checkOut)}${halfDayLeave ? ' (half-day leave also recorded this date)' : ''}">${fh(status.hours)}${halfDayLeave ? ' <span style="color:#fbbf24;" title="Half-day leave">🏖</span>' : ''}${timesLine}</span>`;
                   workingDays++;
                   totalHours += status.hours;
                   if (status.hours < FULL_DAY_HOURS) permissionHours += (FULL_DAY_HOURS - status.hours);
