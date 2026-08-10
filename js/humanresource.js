@@ -76,6 +76,7 @@ function renderHRPortal() {
         { id:'attendance',   icon:'🕒', label:'Attendance' },
         { id:'contribution', icon:'📊', label:'Project Contribution' },
         { id:'addEmployee',  icon:'➕', label:'Add Employee' },
+        { id:'manageEmployees', icon:'✏️', label:'Manage Employees' },
       ].map(t => `
         <button class="hr-tab${HR_TAB===t.id?' active':''}" data-tab="${t.id}" style="
           padding:8px 16px;border:none;background:none;cursor:pointer;
@@ -121,6 +122,7 @@ function renderHRTab() {
   }
   if (HR_TAB === 'contribution') { renderHRContributionTab(content); return; }
   if (HR_TAB === 'addEmployee')  { renderHRAddEmployeeTab(content);  return; }
+  if (HR_TAB === 'manageEmployees') { renderHRManageEmployeesTab(content); return; }
 }
 
 // ══════════════════════════════════════════════════
@@ -637,20 +639,100 @@ function renderHRAddEmployeeTab(content) {
   });
 }
 
-// ══════════════════════════════════════════════════════════════
-// ⚠️ BACKEND NOT YET WIRED — add this to Code.gs's action switch,
-// alongside the existing createClientMaster/createProjectMaster
-// handlers (Code.gs was not part of this session's uploads, so it
-// could not be edited directly — paste this in manually):
-//
-//   } else if (action === 'createEmployee') {
-//     var d = JSON.parse(e.parameter.data);
-//     var sheet = ss.getSheetByName('Employees');
-//     sheet.appendRow([d.id, d.name, d.team, d.pw]);
-//     return jsonOk({ created: true });
-//
-// Also requires an <div id="hrPortal"> app shell (mirroring
-// #mgrPortal / #tlPortal) in index.html, with #hrApp inside it and
-// a topbar showing #hrAv/#hrName/#hrTeam — index.html was not part
-// of this session's uploads either.
-// ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
+// MANAGE EMPLOYEES — edit an existing employee's team, ID, password,
+// and Active/In-Active status. Reuses the exact same lookup-by-name
+// convention Code.gs's updateEmployeeRecord already enforces (see
+// that function's comments) — this UI is just a form in front of it.
+// The Employee ID field is pre-filled with the current ID (editable
+// directly, e.g. to correct a typo) — only sent as a change if it
+// actually differs from what it started as. Password is a separate
+// opt-in "New Password" field (blank = keep existing); the backend
+// only requires both to be non-blank when reactivating a legacy row
+// that currently has no login credentials at all, and reports that
+// as a normal error message if needed but left blank.
+// ══════════════════════════════════════════════════
+function renderHRManageEmployeesTab(content) {
+  const employees = (typeof CP_EMPLOYEES !== 'undefined' ? CP_EMPLOYEES : HR_EMPLOYEES)
+    .slice()
+    .sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || (a.name || '').localeCompare(b.name || ''));
+
+  content.innerHTML = `
+    <div style="margin-bottom:1.1rem;">
+      <div style="font-size:16px;font-weight:700;color:var(--txt1);">✏️ Manage Employees</div>
+      <div style="font-size:12px;color:var(--txt2);">Edit team or toggle Active / In-Active. Reactivating a row with no Employee ID/Password on file will ask you to set one.</div>
+    </div>
+    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;overflow:hidden;">
+      ${employees.map((emp, i) => `
+        <div class="hr-manage-row" data-name="${esc(emp.name)}" style="padding:12px 16px;${i > 0 ? 'border-top:1px solid var(--border);' : ''}
+          display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <div style="min-width:160px;flex:1 1 160px;">
+            <div style="font-size:13px;font-weight:700;color:var(--txt1);">${esc(emp.name)}</div>
+            <div style="font-size:10.5px;color:var(--txt2);">${esc(emp.id)}</div>
+          </div>
+          <div style="flex:0 0 140px;">
+            <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;">Team</label>
+            <input type="text" class="hr-manage-team" value="${esc(emp.team || '')}" style="width:100%;box-sizing:border-box;
+              background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;"/>
+          </div>
+          <div style="flex:0 0 130px;">
+            <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;">Status</label>
+            <select class="hr-manage-status" style="width:100%;box-sizing:border-box;
+              background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;">
+              <option value="Active" ${emp.active !== false ? 'selected' : ''}>Active</option>
+              <option value="Inactive" ${emp.active === false ? 'selected' : ''}>In-Active</option>
+            </select>
+          </div>
+          <div style="flex:0 0 120px;">
+            <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;">Employee ID</label>
+            <input type="text" class="hr-manage-newid" value="${esc(emp.id && !String(emp.id).startsWith('INACTIVE-') ? emp.id : '')}" placeholder="required to activate" style="width:100%;box-sizing:border-box;
+              background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;"/>
+          </div>
+          <div style="flex:0 0 120px;">
+            <label style="font-size:9.5px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:3px;">New Password</label>
+            <input type="text" class="hr-manage-newpw" placeholder="optional" style="width:100%;box-sizing:border-box;
+              background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--txt1);font-size:12px;padding:6px 8px;"/>
+          </div>
+          <button class="hr-manage-save" style="background:var(--a1);color:#fff;border:none;border-radius:6px;
+            padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;align-self:flex-end;">Save</button>
+          <div class="hr-manage-err" style="display:none;font-size:11px;color:#f87171;flex-basis:100%;"></div>
+        </div>`).join('')}
+    </div>
+  `;
+
+  content.querySelectorAll('.hr-manage-row').forEach(row => {
+    row.querySelector('.hr-manage-save').addEventListener('click', async () => {
+      const originalName = row.dataset.name;
+      const team   = row.querySelector('.hr-manage-team').value.trim();
+      const status = row.querySelector('.hr-manage-status').value;
+      const newId  = row.querySelector('.hr-manage-newid').value.trim();
+      const newPw  = row.querySelector('.hr-manage-newpw').value.trim();
+      const errEl  = row.querySelector('.hr-manage-err');
+      const btn    = row.querySelector('.hr-manage-save');
+      errEl.style.display = 'none';
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const result = await apiUpdateEmployeeRecord({
+          role: 'hr', originalName, team, status, newId, newPw,
+        });
+
+        // Reflect locally so the list doesn't need a full reload.
+        const employees = (typeof CP_EMPLOYEES !== 'undefined' ? CP_EMPLOYEES : HR_EMPLOYEES);
+        const localEmp = employees.find(e => e.name === originalName);
+        if (localEmp) {
+          localEmp.team = team;
+          localEmp.active = status === 'Active';
+          if (result.name) localEmp.name = result.name;
+        }
+
+        toast('s', 'Employee updated', `${originalName} · ${status === 'Active' ? 'Active' : 'In-Active'}`);
+        renderHRManageEmployeesTab($('hrTabContent'));
+      } catch (e) {
+        errEl.textContent = e.message || 'Failed to update.';
+        errEl.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Save';
+      }
+    });
+  });
+}

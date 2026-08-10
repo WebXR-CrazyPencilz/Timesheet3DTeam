@@ -98,6 +98,18 @@ async function apiSaveBiometricPunch(data) {
   });
 }
 
+// ── UPDATE EMPLOYEE RECORD (HR only) ──────────────
+async function apiUpdateEmployeeRecord(data) {
+  if (CONFIG.DEMO_MODE) {
+    return { updated: true };
+  }
+  return sheetGET({
+    action: 'updateEmployeeRecord',
+    data:   encodeURIComponent(JSON.stringify(data)),
+  });
+}
+
+
 // ── GET HISTORY (own entries — employee portal) ───
 async function apiGetHistory(uid) {
   function safeSort(arr) {
