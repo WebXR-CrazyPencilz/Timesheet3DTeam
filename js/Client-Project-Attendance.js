@@ -500,8 +500,24 @@ function openAttendanceCellMenu(cellEl, empId, empName, date) {
     // shared with Team Leader's Attendance tab too.
     const portalRoot = cellEl.closest('#mgrApp, #tlApp');
     const portalId   = portalRoot ? portalRoot.id : 'mgrApp';
-    const tabContent = portalRoot ? portalRoot.querySelector('#mgrTabContent, #tlTabContent') : $('mgrTabContent');
-    openForceEntry(empId, empName, date, () => renderAttendanceTab(tabContent), portalId);
+    // NOT captured as a stale element reference — openForceEntry()
+    // replaces the ENTIRE #mgrApp/#tlApp container's innerHTML (tab
+    // bar included, not just the content area) to take over the
+    // screen, so a `tabContent` element captured here-and-now would
+    // point to a node that's already been destroyed by the time this
+    // callback actually runs (Back click, or after a successful
+    // save). Calling renderMgrTab()/renderTLTab() alone isn't enough
+    // either — those only render INTO #mgrTabContent/#tlTabContent,
+    // which openForceEntry() also destroyed along with everything
+    // else in the container, so they'd hit their own "if (!content)
+    // return" guard and silently no-op. renderManagerPortal()/
+    // renderTLPortal() rebuild the tab bar AND recreate that content
+    // div from scratch (the same thing that runs on first login),
+    // which is what's actually needed here.
+    openForceEntry(empId, empName, date, () => {
+      if (portalId === 'tlApp' && typeof renderTLPortal === 'function') renderTLPortal();
+      else if (typeof renderManagerPortal === 'function') renderManagerPortal();
+    }, portalId);
   });
 
   menu.querySelector('#attendMenuForceLeave').addEventListener('click', () => {

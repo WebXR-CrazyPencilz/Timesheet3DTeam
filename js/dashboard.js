@@ -110,178 +110,17 @@ async function renderManagerDashboard(content) {
   // directly.
   content.innerHTML = `
     <div id="dashKpiWrap" style="margin-bottom:22px;"></div>
-    <div style="margin-bottom:22px;" id="dashBestEmpWrap"></div>
     <div style="display:flex;gap:10px;align-items:stretch;">
       <div style="flex:0 0 330px;" id="dashNotLoggedWrap"></div>
       <div style="flex:0 0 600px;" id="dashTeamPerfWrap"></div>
       <div style="flex:1;min-width:280px;" id="dashClientRollupWrap"></div>
     </div>`;
   renderDashboardKpiRow($('dashKpiWrap'));
-  renderDashboardBestEmployee($('dashBestEmpWrap'));
   renderDashboardNotLoggedPanel($('dashNotLoggedWrap'));
   renderDashboardShell($('dashTeamPerfWrap'));
   renderDashboardClientRollup($('dashClientRollupWrap'));
 }
 
-// ══════════════════════════════════════════════════════════════
-// BEST EMPLOYEE OF THE MONTH — ranks every active employee on four
-// criteria for the current calendar month, using only
-// CP_TIMESHEET_DATA/CP_EMPLOYEES (already loaded, no new fetch):
-//   1. Multiple projects handling — distinct projects worked this month
-//   2. Proper attendance — days worked ÷ weekdays elapsed so far
-//   3. Less overtime — total minutes over the same 9h/day threshold
-//      table.js's own OT badge uses (OVERTIME_THRESHOLD_HOURS), so
-//      "overtime" means the same thing here as it does on an
-//      employee's own timesheet
-//   4. No leaves — leave days taken this month
-//
-// Each criterion is min-max normalized across employees (0–1) so
-// they're comparable regardless of units, then averaged equally
-// (25% each) into one score. This is a ranking heuristic for a
-// quick monthly shout-out, not a formal performance metric.
-// ══════════════════════════════════════════════════════════════
-const DASH_OT_THRESHOLD_HOURS = 9; // matches OVERTIME_THRESHOLD_HOURS in table.js
-
-function computeBestEmployeeStats(monthKey) {
-  const employees = (typeof CP_EMPLOYEES !== 'undefined' ? CP_EMPLOYEES : []).filter(e => e.active !== false);
-  const entries = (typeof CP_TIMESHEET_DATA !== 'undefined' ? CP_TIMESHEET_DATA : [])
-    .filter(e => (e.date || '').startsWith(monthKey));
-
-  const [y, m] = monthKey.split('-').map(Number);
-  const today = new Date();
-  const isCurrentMonth = today.getFullYear() === y && today.getMonth() + 1 === m;
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const lastDay = isCurrentMonth ? today.getDate() : daysInMonth;
-
-  // Weekdays elapsed so far this month (Mon–Sat, matching the app's
-  // existing 6-day work week assumption elsewhere — e.g. weekStart()
-  // in utils.js treats Sunday as outside the work week).
-  let weekdaysElapsed = 0;
-  for (let d = 1; d <= lastDay; d++) {
-    if (new Date(y, m - 1, d).getDay() !== 0) weekdaysElapsed++;
-  }
-  weekdaysElapsed = Math.max(1, weekdaysElapsed);
-
-  const stats = employees.map(emp => {
-    const empEntries = entries.filter(e => e.empId === emp.id);
-    const worked = empEntries.filter(e => e.status !== 'Leave');
-    const leaves = empEntries.filter(e => e.status === 'Leave');
-
-    const projectSet = new Set(worked.map(e => e.project).filter(Boolean));
-    const daysWorked = new Set(worked.map(e => e.date)).size;
-    const leaveDays  = new Set(leaves.map(e => e.date)).size;
-
-    const dayTotals = {};
-    worked.forEach(e => { dayTotals[e.date] = (dayTotals[e.date] || 0) + (parseFloat(e.hours) || 0); });
-    const overtimeHours = Object.values(dayTotals)
-      .filter(h => h > DASH_OT_THRESHOLD_HOURS)
-      .reduce((s, h) => s + (h - DASH_OT_THRESHOLD_HOURS), 0);
-
-    return {
-      emp, projectCount: projectSet.size, daysWorked, leaveDays, overtimeHours,
-      attendanceRatio: Math.min(1, daysWorked / weekdaysElapsed),
-    };
-  }).filter(s => s.daysWorked > 0 || s.leaveDays > 0); // skip employees with zero activity this month
-
-  if (!stats.length) return [];
-
-  const norm = (vals, higherIsBetter) => {
-    const min = Math.min(...vals), max = Math.max(...vals);
-    if (max === min) return vals.map(() => 1); // everyone tied on this metric — full credit, don't penalize
-    return vals.map(v => higherIsBetter ? (v - min) / (max - min) : (max - v) / (max - min));
-  };
-
-  const projScores = norm(stats.map(s => s.projectCount), true);
-  const attScores  = norm(stats.map(s => s.attendanceRatio), true);
-  const otScores   = norm(stats.map(s => s.overtimeHours), false);
-  const leaveScores= norm(stats.map(s => s.leaveDays), false);
-
-  stats.forEach((s, i) => {
-    s.score = (projScores[i] + attScores[i] + otScores[i] + leaveScores[i]) / 4;
-  });
-
-  return stats.sort((a, b) => b.score - a.score);
-}
-
-function renderDashboardBestEmployee(wrap) {
-  if (!wrap) return;
-  const monthKey = todayStr().slice(0, 7);
-  const monthLabel = new Date(monthKey + '-01').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-  const ranked = computeBestEmployeeStats(monthKey);
-
-  if (!ranked.length) {
-    wrap.innerHTML = `
-      <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.4rem;">
-        <div style="font-size:14px;font-weight:700;color:var(--txt1);">🏆 Employee of the Month — ${esc(monthLabel)}</div>
-        <div style="font-size:12px;color:var(--txt2);margin-top:4px;">No activity logged yet this month.</div>
-      </div>`;
-    return;
-  }
-
-  const top = ranked[0];
-  const runnersUp = ranked.slice(1, 4);
-
-  wrap.innerHTML = `
-    <div style="background:var(--surface1);border:1px solid var(--border);border-radius:12px;padding:1.2rem 1.4rem;">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-        <div>
-          <div style="font-size:14px;font-weight:700;color:var(--txt1);">🏆 Employee of the Month — ${esc(monthLabel)}</div>
-          <div style="font-size:11px;color:var(--txt2);">Ranked on projects handled, attendance, overtime, and leaves — a quick heuristic, not a formal review.</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;">
-        <div style="background:var(--elevated);border:1px solid rgba(251,191,36,.35);border-radius:12px;padding:1rem 1.3rem;flex:1;min-width:260px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-            <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#fbbf24,#fb923c);
-              display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:14px;">
-              ${esc((top.emp.name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase())}
-            </div>
-            <div>
-              <div style="font-size:14px;font-weight:700;color:var(--txt1);">${esc(top.emp.name)}</div>
-              <div style="font-size:10.5px;color:var(--txt2);">${esc(top.emp.team || '—')}</div>
-            </div>
-          </div>
-          <div style="display:flex;gap:14px;flex-wrap:wrap;">
-            <div>
-              <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Projects</div>
-              <div style="font-size:13px;font-weight:700;color:var(--a1);">${top.projectCount}</div>
-            </div>
-            <div>
-              <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Attendance</div>
-              <div style="font-size:13px;font-weight:700;color:var(--txt1);">${Math.round(top.attendanceRatio * 100)}%</div>
-            </div>
-            <div>
-              <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Overtime</div>
-              <div style="font-size:13px;font-weight:700;color:var(--txt1);">${fh(top.overtimeHours)}</div>
-            </div>
-            <div>
-              <div style="font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px;">Leaves</div>
-              <div style="font-size:13px;font-weight:700;color:var(--txt1);">${top.leaveDays}</div>
-            </div>
-          </div>
-        </div>
-        ${runnersUp.length ? `
-        <div style="flex:1;min-width:220px;display:flex;flex-direction:column;gap:6px;justify-content:center;">
-          ${runnersUp.map((s, i) => `
-            <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:5px 0;
-              ${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
-              <span style="color:var(--txt2);">#${i + 2} ${esc(s.emp.name)}</span>
-              <span style="color:var(--txt2);font-family:var(--fm,monospace);font-size:11px;">${s.projectCount} proj · ${Math.round(s.attendanceRatio*100)}% att</span>
-            </div>`).join('')}
-        </div>` : ''}
-      </div>
-    </div>`;
-}
-
-
-// ── CACHE BUILD (single pass, reused across every drill-down click) ──
-// Buckets company-wide hours into years → quarters → months, tracking
-// distinct employees and distinct projects at every level. Rebuilds
-// only when the underlying data actually changed (Timesheet, Employee
-// roster, Historical Import) — a length-based fingerprint, same
-// pattern used for every other cache in this app (gantt.js,
-// Monthly Allocation). Drill-down clicks never touch this function
-// again — they only read DASH_CACHE.
 function buildTeamPerformanceCache(force = false) {
   const fingerprint = [
     (typeof CP_TIMESHEET_DATA !== 'undefined' ? CP_TIMESHEET_DATA.length : 0),

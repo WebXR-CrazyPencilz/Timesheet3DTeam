@@ -429,17 +429,43 @@ async function saveForceEntryAll() {
   if (btn) { btn.classList.add('ld'); btn.disabled = true; }
   toast?.('i', 'Saving force entry…', 'Please wait', 18000);
 
-  try {
-    for (const entry of collected) {
-      await apiSaveSlot(entry);
-    }
-    toast?.('s', 'Force Entry saved', `${collected.length} session${collected.length > 1 ? 's' : ''} recorded for ${FE_EMP.name}.`);
+  // Each entry is saved independently, not as one all-or-nothing
+  // sequence — the old version awaited them in a single loop inside
+  // one try/catch, so if entry #2 of 4 failed (a slow network hiccup,
+  // a validation error, the date turning out to already be a Public
+  // Holiday, etc.), the loop stopped right there: entry #1 had
+  // already been written to the sheet, entries #3 and #4 were never
+  // even attempted, and the person just saw one generic "Save
+  // failed" toast with no way to tell which of the 4 rows actually
+  // made it in. That silent partial-save is almost certainly what
+  // "sometimes force entries aren't registering" was — not random
+  // flakiness, a real gap where a single failure discarded the rest
+  // of the batch without saying so.
+  const results = await Promise.allSettled(collected.map(entry => apiSaveSlot(entry)));
+  const succeeded = results.filter(r => r.status === 'fulfilled').length;
+  const failed = results
+    .map((r, i) => ({ r, entry: collected[i] }))
+    .filter(x => x.r.status === 'rejected');
+
+  if (btn) { btn.classList.remove('ld'); btn.disabled = false; }
+
+  if (failed.length === 0) {
+    toast?.('s', 'Force Entry saved', `${succeeded} session${succeeded > 1 ? 's' : ''} recorded for ${FE_EMP.name}.`);
     if (FE_RETURN_TO) FE_RETURN_TO();
     else if (typeof openEmpDetail === 'function') await openEmpDetail(FE_EMP.id, FE_EMP.name);
-  } catch(err) {
-    toast?.('e', 'Save failed', err.message);
-  } finally {
-    if (btn) { btn.classList.remove('ld'); btn.disabled = false; }
+    return;
+  }
+
+  if (succeeded > 0) {
+    // Partial success — say so explicitly rather than a single
+    // pass/fail toast that would hide the fact that SOME rows did
+    // save. List each failure's specific reason, since they can
+    // differ (one slot might hit the 4-per-slot cap while another
+    // hits the Public Holiday lock).
+    const reasons = failed.map(x => `${x.entry.slot} #${x.entry.entryNum}: ${x.r.reason.message}`).join(' · ');
+    toast?.('e', `${succeeded} of ${collected.length} saved`, reasons, 10000);
+  } else {
+    toast?.('e', 'Save failed', failed[0].r.reason.message);
   }
 }
 
