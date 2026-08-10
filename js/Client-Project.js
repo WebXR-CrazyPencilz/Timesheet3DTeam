@@ -2971,6 +2971,7 @@ let CP_ATTEND_MODE  = 'last15'; // 'last15' | 'custom' | 'month'
 let CP_ATTEND_FROM  = '';
 let CP_ATTEND_TO    = '';
 let CP_ATTEND_MONTH = ''; // 'YYYY-MM', used when CP_ATTEND_MODE === 'month'
+let CP_ATTEND_HR_DEFAULTED = false; // one-time guard — see renderAttendanceTab
 
 const CP_ATTEND_MONTH_FLOOR = '2026-07'; // earliest month offered in the dropdown
 
@@ -2983,6 +2984,19 @@ function renderAttendanceTab(content) {
     CP_ATTEND_FROM = toLocalDateStr(f);
   }
   if (!CP_ATTEND_MONTH) CP_ATTEND_MONTH = tod.slice(0, 7) < CP_ATTEND_MONTH_FLOOR ? CP_ATTEND_MONTH_FLOOR : tod.slice(0, 7);
+
+  // HR's main use for this tab is checking whether something (like a
+  // pushed public holiday) landed on the right date, which needs the
+  // WHOLE month visible, not just the trailing 15-day window Manager/
+  // TL default to. Default HR straight into Month Wise / current
+  // month the first time this tab opens — only once per session
+  // (CP_ATTEND_HR_DEFAULTED guards it) so switching to Last 15 Days
+  // manually afterward isn't fought on every re-render.
+  if (getCPRole() === 'hr' && !CP_ATTEND_HR_DEFAULTED) {
+    CP_ATTEND_HR_DEFAULTED = true;
+    CP_ATTEND_MODE = 'month';
+    applyAttendMonth(CP_ATTEND_MONTH);
+  }
 
   // Months from the floor up through the current month, newest first.
   const monthOptions = [];
@@ -3031,6 +3045,11 @@ function renderAttendanceTab(content) {
           border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;">
           ⬇ Export PDF
         </button>
+        ${getCPRole() === 'hr' ? `
+        <button id="attendPushHoliday" style="background:#fbbf24;color:#1a1a2e;border:none;
+          border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          📅 Push Public Holiday
+        </button>` : ''}
       </div>
     </div>
     <div id="attendGridWrap"></div>
@@ -3038,7 +3057,7 @@ function renderAttendanceTab(content) {
       <span><span style="color:#34d399;font-weight:700;">Hours</span> = worked that day</span>
       <span><span style="color:#fbbf24;font-weight:700;">🏖 Leave</span> = approved leave (full day)</span>
       <span>Hours <span style="color:#fbbf24;">🏖</span> = worked part of the day, also had a half-day leave entry that date</span>
-      <span><span style="color:#9ca3af;font-weight:700;">⚫ Holiday</span> = marked as holiday</span>
+      <span><span style="color:#9ca3af;font-weight:700;">⚫ [Name]</span> = public holiday (name shown is what HR entered when pushing it)</span>
       <span><span style="color:#f87171;font-weight:700;">✕ No Entry</span> = working day, nothing logged</span>
       <span><span style="color:var(--txt2);">—</span> = weekend</span>
       <span><span style="color:#a78bfa;font-weight:700;">Permission Hrs</span> = shortfall below a ${9}h full day, on days actually worked</span>
@@ -3077,6 +3096,7 @@ function renderAttendanceTab(content) {
   });
 
   $('attendExportPdf').addEventListener('click', () => exportAttendanceToPDF());
+  $('attendPushHoliday')?.addEventListener('click', () => openBulkHolidayModal());
 
   renderAttendanceGrid();
 }
@@ -3089,10 +3109,16 @@ function renderAttendanceTab(content) {
 function applyAttendMonth(monthKey) {
   CP_ATTEND_MONTH = monthKey;
   const [y, m] = monthKey.split('-').map(Number);
-  const tod = todayStr();
   const lastDayOfMonth = toLocalDateStr(new Date(y, m, 0));
   CP_ATTEND_FROM = `${monthKey}-01`;
-  CP_ATTEND_TO   = lastDayOfMonth > tod ? tod : lastDayOfMonth;
+  // Used to truncate CP_ATTEND_TO to today here, before
+  // renderAttendanceGrid's own (now mode-aware) cap ever got a
+  // chance to run — so "Month Wise" was silently just as blind to
+  // future dates as "Last 15 Days", even though only the latter is
+  // supposed to be. A pushed-in-advance public holiday later in the
+  // month would never show. Always use the real last day of the
+  // month here; renderAttendanceGrid decides per-mode whether to cap.
+  CP_ATTEND_TO = lastDayOfMonth;
 }
 
 // Exports exactly what's currently rendered in the grid — whichever
@@ -3177,7 +3203,9 @@ function getEmpDayStatus(empId, date) {
   const rec = cpGetEmpDayAttendance(empId, date);
   const dayEntries = CP_TIMESHEET_DATA.filter(e => e.empId === empId && e.date === date);
   const hasLeave   = dayEntries.some(e => e.status === 'Leave');
-  const hasHoliday = dayEntries.some(e => e.status === 'Holiday');
+  const hasHoliday   = dayEntries.some(e => e.status === 'Holiday');
+  const holidayEntry = dayEntries.find(e => e.status === 'Holiday');
+  const holidayName  = holidayEntry ? (holidayEntry.task || 'Holiday') : '';
 
   // A day can be BOTH worked and Leave — a half-day leave (e.g. leave
   // in the morning, worked the afternoon). The old version checked
@@ -3187,7 +3215,7 @@ function getEmpDayStatus(empId, date) {
   // reported alongside 'worked' instead of being hidden by it.
   if (rec.hasEntry) return { kind: 'worked', hasLeave, hasHoliday, ...rec };
   if (hasLeave)   return { kind: 'leave', hasLeave: true };
-  if (hasHoliday) return { kind: 'holiday' };
+  if (hasHoliday) return { kind: 'holiday', holidayName };
   return { kind: 'not_logged' };
 }
 
@@ -3196,7 +3224,18 @@ function renderAttendanceGrid() {
   if (!wrap) return;
 
   const tod      = todayStr();
-  const cappedTo = CP_ATTEND_TO > tod ? tod : CP_ATTEND_TO;
+  // "Last 15 Days" is inherently a trailing window ending today by
+  // construction, so capping it at today is a no-op there. But
+  // "Month Wise" / "Start → End" are explicit choices — if HR is
+  // looking at a month that includes future dates (e.g. viewing
+  // August while a public holiday was already pushed for Aug 15, a
+  // few days ahead), those future columns need to actually render so
+  // the holiday is visible. The existing `d > tod` branch below
+  // already shows a neutral "·" placeholder for ordinary future days
+  // with nothing on them — it just never used to be reachable because
+  // this cap excluded those dates from `days` entirely before it got
+  // that far.
+  const cappedTo = CP_ATTEND_MODE === 'last15' && CP_ATTEND_TO > tod ? tod : CP_ATTEND_TO;
   const CAP = 60; // keep the grid usable even for a very wide custom range
   const startDate   = new Date(CP_ATTEND_FROM + 'T00:00:00');
   const endDate     = new Date(cappedTo + 'T00:00:00');
@@ -3224,16 +3263,19 @@ function renderAttendanceGrid() {
               font-size:10px;white-space:nowrap;">${new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}</th>`).join('')}
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;border-left:2px solid var(--border);
-              position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Leave<br/>Days</th>
+              position:sticky;right:400px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Leave<br/>Days</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Permission<br/>Hrs</th>
+              position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Permission<br/>Hrs</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Working<br/>Days</th>
+              position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Working<br/>Days</th>
             <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
               font-size:10px;text-transform:uppercase;white-space:nowrap;
-              position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Total<br/>Hours</th>
+              position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Total<br/>Hours</th>
+            <th style="text-align:center;padding:9px 6px;background:var(--surface2);color:var(--txt2);
+              font-size:10px;text-transform:uppercase;white-space:nowrap;
+              position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;z-index:1;">Overtime</th>
           </tr>
         </thead>
         <tbody>
@@ -3244,11 +3286,11 @@ function renderAttendanceGrid() {
             // filter), this only affects what shows in this grid.
             const activeEmployees = (CP_EMPLOYEES || []).filter(emp => emp.active !== false);
             if (!activeEmployees.length) {
-              return `<tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--txt2);">No employees found.</td></tr>`;
+              return `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--txt2);">No employees found.</td></tr>`;
             }
-            const FULL_DAY_HOURS = 9; // baseline used for "Permission Hours" — adjust if your actual full working day differs
+            const FULL_DAY_HOURS = 9; // baseline used for "Permission Hours" and "Overtime" — adjust if your actual full working day differs
             return activeEmployees.map(emp => {
-              let leaveDays = 0, workingDays = 0, totalHours = 0, permissionHours = 0;
+              let leaveDays = 0, workingDays = 0, totalHours = 0, permissionHours = 0, overtimeHours = 0;
 
               const dayCellsHtml = days.map(d => {
                 const dow = new Date(d + 'T00:00:00').getDay();
@@ -3264,12 +3306,13 @@ function renderAttendanceGrid() {
                   workingDays++;
                   totalHours += status.hours;
                   if (status.hours < FULL_DAY_HOURS) permissionHours += (FULL_DAY_HOURS - status.hours);
+                  if (status.hours > FULL_DAY_HOURS) overtimeHours   += (status.hours - FULL_DAY_HOURS);
                   if (halfDayLeave) leaveDays++;
                 } else if (status.kind === 'leave') {
                   cell = `<span style="color:#fbbf24;font-weight:700;" title="On approved leave">🏖 Leave</span>`;
                   leaveDays++;
                 } else if (status.kind === 'holiday') {
-                  cell = `<span style="color:#9ca3af;font-weight:700;" title="Marked as holiday">⚫ Holiday</span>`;
+                  cell = `<span style="color:#9ca3af;font-weight:700;" title="Public Holiday: ${esc(status.holidayName)}">⚫ ${esc(status.holidayName)}</span>`;
                 } else if (isWeekend) {
                   cell = `<span style="color:var(--txt2);">—</span>`;
                 } else if (d > tod) {
@@ -3293,13 +3336,15 @@ function renderAttendanceGrid() {
                 </td>
                 ${dayCellsHtml}
                 <td style="padding:8px 6px;text-align:center;color:${leaveDays > 0 ? '#fbbf24' : 'var(--txt2)'};font-weight:700;
-                  border-left:2px solid var(--border);position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${leaveDays}</td>
+                  border-left:2px solid var(--border);position:sticky;right:400px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${leaveDays}</td>
                 <td style="padding:8px 6px;text-align:center;color:${permissionHours > 0 ? '#a78bfa' : 'var(--txt2)'};font-weight:700;
-                  position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${permissionHours > 0 ? fh(permissionHours) : '—'}</td>
+                  position:sticky;right:300px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${permissionHours > 0 ? fh(permissionHours) : '—'}</td>
                 <td style="padding:8px 6px;text-align:center;color:var(--txt1);font-weight:700;
-                  position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${workingDays}</td>
+                  position:sticky;right:200px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${workingDays}</td>
                 <td style="padding:8px 6px;text-align:center;color:var(--a1);font-weight:700;
-                  position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${fh(totalHours)}</td>
+                  position:sticky;right:100px;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${fh(totalHours)}</td>
+                <td style="padding:8px 6px;text-align:center;color:${overtimeHours > 0 ? '#f87171' : 'var(--txt2)'};font-weight:700;
+                  position:sticky;right:0;width:100px;min-width:100px;max-width:100px;box-sizing:border-box;background:var(--surface1);">${overtimeHours > 0 ? fh(overtimeHours) : '—'}</td>
               </tr>`;
             }).join('');
           })()}
@@ -3442,6 +3487,159 @@ function openAttendanceForceLeaveModal(empId, empName, date) {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Submit';
       toast?.('e', 'Failed to save', err.message);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════
+// PUSH PUBLIC HOLIDAY — HR only. Unlike Force Leave/Force Entry
+// above (which act on ONE employee/ONE date, clicked from a specific
+// "No Entry" cell), this opens a plain date picker with no range
+// restriction — any date, any month, not limited to whatever window
+// the Attendance grid currently happens to be showing — and applies
+// it to every active employee at once. Reuses the exact same
+// buildManagerEntry + apiSaveSlot write path Force Leave already
+// uses, just looped across CP_EMPLOYEES instead of a single emp, and
+// writes status:'Holiday' (the status getEmpDayStatus/the grid's ⚫
+// Holiday cell already recognize) instead of 'Leave'. Employees who
+// already have a real entry that date (worked, leave, or already
+// holiday) are skipped rather than overwritten.
+// ══════════════════════════════════════════════════
+function openBulkHolidayModal() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);
+    display:flex;align-items:center;justify-content:center;z-index:9999;`;
+  overlay.innerHTML = `
+    <div style="background:var(--surface1);border:1px solid var(--border-md);border-radius:14px;padding:1.25rem;width:380px;max-width:92vw;">
+      <div style="font-weight:700;font-size:15px;color:var(--txt1);margin-bottom:2px;">📅 Push Public Holiday</div>
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:12px;">Applies to every active employee. Pick any date — not limited to the range currently shown.</div>
+      <label style="font-size:11px;color:var(--txt2);font-weight:600;display:block;margin-bottom:4px;">Date</label>
+      <input type="date" id="holidayDate" style="width:100%;box-sizing:border-box;margin-bottom:10px;
+        background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--txt1);
+        font-size:12.5px;padding:8px 10px;"/>
+      <label style="font-size:11px;color:var(--txt2);font-weight:600;display:block;margin-bottom:4px;">
+        Holiday Name <span style="color:#f87171;">(required)</span>
+      </label>
+      <input type="text" id="holidayName" placeholder="e.g. Independence Day" style="width:100%;box-sizing:border-box;
+        background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--txt1);
+        font-size:12.5px;padding:8px 10px;"/>
+      <div id="holidayErr" style="display:none;font-size:11.5px;color:#f87171;margin-top:6px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button id="holidayCancel" style="background:none;border:1px solid var(--border-md);
+          color:var(--txt2);border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;">Cancel</button>
+        <button id="holidaySubmit" style="background:#fbbf24;border:none;
+          color:#1a1a2e;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;">Push to All</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#holidayCancel').addEventListener('click', () => overlay.remove());
+
+  overlay.querySelector('#holidaySubmit').addEventListener('click', async () => {
+    const date = overlay.querySelector('#holidayDate').value;
+    const name = overlay.querySelector('#holidayName').value.trim();
+    const errEl = overlay.querySelector('#holidayErr');
+    errEl.style.display = 'none';
+
+    if (!date) { errEl.textContent = 'Pick a date.'; errEl.style.display = 'block'; return; }
+    if (!name) { errEl.textContent = 'Holiday name is required.'; errEl.style.display = 'block'; return; }
+    if (typeof buildManagerEntry !== 'function' || typeof apiSaveSlot !== 'function') {
+      toast?.('e', 'Required module not loaded');
+      return;
+    }
+
+    const submitBtn = overlay.querySelector('#holidaySubmit');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Pushing…';
+
+    // Wraps the ENTIRE push, not just the per-employee apiSaveSlot
+    // call — getEmpDayStatus() below was previously called outside
+    // any try/catch. If it (or anything else in this block) threw
+    // for any reason, the async handler died as an unhandled
+    // rejection with the button permanently stuck on "Pushing…" and
+    // no toast at all — indistinguishable from "the button just
+    // didn't respond". This outer catch guarantees the button always
+    // resets and a real error message is always shown, no matter
+    // what fails or where.
+    try {
+      const activeEmployees = (CP_EMPLOYEES || []).filter(emp => emp.active !== false);
+      if (!activeEmployees.length) {
+        errEl.textContent = 'No active employees loaded — try reopening the Attendance tab first.';
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Push to All';
+        return;
+      }
+
+      let applied = 0, skipped = 0;
+      const errors = []; // { empName, message } — surfaced below instead of only console.warn,
+                          // since a silent per-employee failure with no visible feedback was
+                          // indistinguishable from "nothing happened at all" from the UI.
+
+      for (const emp of activeEmployees) {
+        let status;
+        try {
+          status = getEmpDayStatus(emp.id, date);
+        } catch (statusErr) {
+          errors.push({ empName: emp.name, message: 'Status check failed: ' + statusErr.message });
+          continue;
+        }
+        // getEmpDayStatus's "no entry logged" value is 'not_logged',
+        // not 'none' — this check was comparing against the wrong
+        // string, so it was true for literally every employee
+        // regardless of what was actually in their sheet, and every
+        // push silently skipped everyone. This is the actual bug
+        // behind every "Nothing to push" result so far.
+        if (status.kind !== 'not_logged') { skipped++; continue; } // already worked/leave/holiday that day — don't overwrite
+
+        try {
+          const fields = { slot: 'extended', client: 'Holiday', clientId: '', project: 'Holiday', projectId: '', task: name, hours: 0, status: 'Holiday', tag: 'PUBLIC_HOLIDAY' };
+          const entry  = buildManagerEntry(emp.id, emp.name, date, fields, name);
+          await apiSaveSlot(entry);
+          CP_TIMESHEET_DATA.push({ ...entry, empId: emp.id, empName: emp.name, status: 'Holiday', date, hours: '0h' });
+          applied++;
+        } catch (err) {
+          console.warn('[Bulk Holiday] failed for', emp.id, err.message);
+          errors.push({ empName: emp.name, message: err.message });
+        }
+      }
+
+      const dateLabel = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+
+      if (applied === 0 && errors.length) {
+        // Every write failed — this is a real backend error, not just
+        // "everyone already had an entry that day". Show the actual
+        // error message so it's diagnosable instead of a generic
+        // success-shaped toast that hides the failure.
+        errEl.innerHTML = `Failed for all ${errors.length} employee${errors.length === 1 ? '' : 's'}. First error (${esc(errors[0].empName)}): ${esc(errors[0].message)}`;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Push to All';
+        toast?.('e', 'Push failed', errors[0].message);
+        return;
+      }
+
+      if (applied === 0 && skipped === activeEmployees.length) {
+        toast?.('i', 'Nothing to push', `Every active employee already has an entry on ${dateLabel} — none were overwritten.`);
+        overlay.remove();
+        renderAttendanceGrid();
+        return;
+      }
+
+      toast?.('s', 'Public Holiday pushed', `${dateLabel} — applied to ${applied} employee${applied === 1 ? '' : 's'}${skipped ? `, skipped ${skipped} with existing entries` : ''}${errors.length ? `, ${errors.length} failed` : ''}.`);
+      overlay.remove();
+      renderAttendanceGrid();
+    } catch (outerErr) {
+      // Catches anything unexpected that escaped all the handling
+      // above — guarantees the button never gets stuck and something
+      // is always shown, instead of a silent dead click.
+      console.error('[Bulk Holiday] unexpected failure:', outerErr);
+      errEl.textContent = 'Unexpected error: ' + outerErr.message;
+      errEl.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Push to All';
+      toast?.('e', 'Push failed', outerErr.message);
     }
   });
 }
