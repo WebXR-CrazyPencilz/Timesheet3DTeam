@@ -152,7 +152,15 @@ async function loadAndRenderDay(date) {
     renderSlots();
   } catch (err) {
     console.error('[FORM] loadAndRenderDay error:', err);
-    container.innerHTML = `<div class="slot-error">Failed to load: ${err.message}</div>`;
+    // A raw error line with no way forward was a dead end — this now
+    // gives the person a direct way to try again instead of having
+    // to switch dates and back, or reload the whole page.
+    container.innerHTML = `
+      <div class="slot-error">
+        <div>Failed to load: ${err.message}</div>
+        <button id="feRetryLoadDay" class="btn bghost" style="margin-top:.75rem">↻ Retry</button>
+      </div>`;
+    $('feRetryLoadDay')?.addEventListener('click', () => loadAndRenderDay(date));
   }
 }
 

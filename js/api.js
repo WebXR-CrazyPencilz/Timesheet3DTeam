@@ -12,7 +12,17 @@ async function sheetGET(params, attempt = 1) {
   console.log('[API] GET →', params.action, attempt > 1 ? `(retry #${attempt})` : '');
 
   const controller = new AbortController();
-  const timeout    = setTimeout(() => controller.abort(), 15000);
+  // Apps Script cold starts / a busy spreadsheet can genuinely take
+  // longer than a typical API call — 15s was tight enough that two
+  // consecutive slow (but real) responses in a row could exhaust
+  // both attempts and surface as a raw "signal is aborted without
+  // reason" error to the person, which reads like a crash rather
+  // than "the server was just slow, please wait." Timeout raised to
+  // 25s, and MAX_ATTEMPTS raised from 2 to 3 (two retries instead of
+  // one) — each attempt has a real chance to succeed instead of
+  // giving up after a single retry.
+  const timeout = setTimeout(() => controller.abort(), 25000);
+  const MAX_ATTEMPTS = 3;
 
   try {
     const res  = await fetch(url.toString(), { signal: controller.signal });
@@ -23,9 +33,16 @@ async function sheetGET(params, attempt = 1) {
     return json.data;
   } catch(err) {
     clearTimeout(timeout);
-    if (attempt === 1 && (err.name === 'AbortError' || err.message.includes('fetch'))) {
+    const isTimeoutOrNetwork = err.name === 'AbortError' || err.message.includes('fetch');
+    if (attempt < MAX_ATTEMPTS && isTimeoutOrNetwork) {
       console.warn('[API] Timeout/network error on', params.action, '— retrying...');
-      return sheetGET(params, 2);
+      return sheetGET(params, attempt + 1);
+    }
+    // Replace the raw AbortError message ("signal is aborted without
+    // reason") with something a person can actually act on, after
+    // every attempt has been exhausted.
+    if (isTimeoutOrNetwork) {
+      throw new Error('The server took too long to respond. Please check your connection and try again.');
     }
     throw err;
   }
@@ -86,29 +103,6 @@ async function apiSaveSlot(entry) {
   });
   return { saved: result.saved, history: null };
 }
-
-// ── BIOMETRIC PUNCH (HR only) ─────────────────────
-async function apiSaveBiometricPunch(data) {
-  if (CONFIG.DEMO_MODE) {
-    return { saved: true }; // biometric reconciliation isn't part of the demo dataset
-  }
-  return sheetGET({
-    action: 'saveBiometricPunch',
-    data:   encodeURIComponent(JSON.stringify(data)),
-  });
-}
-
-// ── UPDATE EMPLOYEE RECORD (HR only) ──────────────
-async function apiUpdateEmployeeRecord(data) {
-  if (CONFIG.DEMO_MODE) {
-    return { updated: true };
-  }
-  return sheetGET({
-    action: 'updateEmployeeRecord',
-    data:   encodeURIComponent(JSON.stringify(data)),
-  });
-}
-
 
 // ── GET HISTORY (own entries — employee portal) ───
 async function apiGetHistory(uid) {

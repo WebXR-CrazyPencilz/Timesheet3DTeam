@@ -399,18 +399,19 @@ function renderAttendanceGrid() {
                 // didn't). Purely informational except in HR Portal,
                 // where the whole cell becomes clickable to add/edit it.
                 if (status.biometric) {
-                  cell += `<br/><span style="font-size:9px;color:#818cf8;font-weight:600;" title="Biometric punch (HR-recorded reference, not counted in hours)">🔒 ${status.biometric.in ? fmt12(status.biometric.in) : '—'} → ${status.biometric.out ? fmt12(status.biometric.out) : '—'}</span>`;
-                  // Duration purely from the recorded punch times —
-                  // independent of whatever hours the employee self-
-                  // logged (or didn't). Only counted when BOTH in and
-                  // out are present and out is after in; a same-slot
-                  // punch pair spanning midnight isn't expected here.
+                  let bioDurationText = '';
+                  let bioMins = 0;
                   if (status.biometric.in && status.biometric.out) {
                     const [inH, inM]   = status.biometric.in.split(':').map(Number);
                     const [outH, outM] = status.biometric.out.split(':').map(Number);
-                    const mins = (outH * 60 + outM) - (inH * 60 + inM);
-                    if (mins > 0) biometricHours += mins / 60;
+                    bioMins = (outH * 60 + outM) - (inH * 60 + inM);
+                    if (bioMins > 0) bioDurationText = ` (${fh(bioMins / 60)})`;
                   }
+                  cell += `<br/><span style="font-size:9px;color:#818cf8;font-weight:600;" title="Biometric punch (HR-recorded reference, not counted toward Total Hours above)">🔒 ${status.biometric.in ? fmt12(status.biometric.in) : '—'} → ${status.biometric.out ? fmt12(status.biometric.out) : '—'}${bioDurationText}</span>`;
+                  // Duration purely from the recorded punch times —
+                  // independent of whatever hours the employee self-
+                  // logged (or didn't).
+                  if (bioMins > 0) biometricHours += bioMins / 60;
                 }
 
                 if (isHR) {
