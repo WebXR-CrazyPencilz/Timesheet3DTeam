@@ -69,6 +69,36 @@ function returnToPortalHome() {
   if (typeof renderManagerPortal === 'function') renderManagerPortal();
 }
 
+// After Force Entry (forceentry.js — a separate module, not rewritten
+// here) writes one or more new rows for an employee, TL_DATA needs to
+// reflect that before Employee Detail reopens — otherwise it would
+// silently render from stale data missing the just-added entries.
+// Force Entry can write several rows in one save (multiple slots),
+// which aren't exposed back to this file, so reconstructing them
+// locally isn't reliable — this does ONE targeted request for just
+// this employee (apiGetAllHistory, the same per-employee fetch the
+// old N-request architecture used to make 19 of on every load), not
+// a full Team Leader dataset reload. Manager/HR are unaffected — they
+// never used TL_DATA to begin with, so openEmpDetail() already
+// re-fetches fresh via getEmployeeDetail on every open for them.
+async function refreshTLEmployeeThenOpenDetail(empId, empName) {
+  if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof TL_DATA !== 'undefined' && Array.isArray(TL_DATA)) {
+    try {
+      const fresh = await apiGetAllHistory(empId);
+      for (let i = TL_DATA.length - 1; i >= 0; i--) {
+        if (TL_DATA[i].empId === empId) TL_DATA.splice(i, 1);
+      }
+      fresh.forEach(e => TL_DATA.push({ ...e, empId, empName, empTeam: EMP_DETAIL_EMP?.team || '' }));
+      if (typeof rebuildTLEmployeeIndex === 'function') rebuildTLEmployeeIndex();
+    } catch(err) {
+      toast?.('e', "Could not refresh this employee's data", err.message);
+      // Fall through and open anyway — better to show slightly stale
+      // data than block the person from seeing the page at all.
+    }
+  }
+  openEmpDetail(empId, empName);
+}
+
 // ── Open Employee Detail Page ──────────────────────────────────
 async function openEmpDetail(empId, empName) {
   EMP_DETAIL_EMP     = { id: empId, name: empName };
@@ -325,10 +355,124 @@ function clearActiveDateChip() {
 }
 
 // ── Load data from API ─────────────────────────────────────────
+// ── LOCAL EMPLOYEE DETAIL (Team Leader only) ───────────────────────
+// Mirrors Code.gs's getEmployeeDetail(uid, fromDate, toDate) exactly
+// — same grouping, same "Current Month" semantics (that stat is
+// intentionally independent of the fromDate/toDate range, always the
+// real current calendar month, same as the backend), same leave/
+// project/client/day handling. The only difference is the source:
+// TL_EMPLOYEE_INDEX[empId] (already in memory from the single
+// getTLData() bulk load) instead of a fresh sheet read. TL_DATA's
+// entries already have `.hours` as a parsed decimal number (rowToEntry
+// on the backend does this before the entry ever reaches the browser),
+// so no string-hours parsing is needed here — same numbers either way.
+function buildLocalEmpDetail(empId, empName, fromDate, toDate) {
+  const all = TL_EMPLOYEE_INDEX[empId] || [];
+  let entries = all.filter(e => e.date && e.date >= fromDate && e.date <= toDate);
+  entries = entries.slice().sort((a, b) => b.date.localeCompare(a.date) || (a.slot || '').localeCompare(b.slot || ''));
+
+  const worked = entries.filter(e => e.status !== 'Leave');
+  const leaves = entries.filter(e => e.status === 'Leave');
+  const totalH = worked.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+
+  const projMap = {};
+  worked.forEach(e => {
+    const k = e.project || 'Unassigned';
+    if (!projMap[k]) projMap[k] = { name: k, hours: 0, entries: 0 };
+    projMap[k].hours   += Number(e.hours) || 0;
+    projMap[k].entries += 1;
+  });
+
+  const cliMap = {};
+  worked.forEach(e => {
+    const k = e.client || 'Unknown';
+    if (!cliMap[k]) cliMap[k] = { name: k, hours: 0 };
+    cliMap[k].hours += Number(e.hours) || 0;
+  });
+
+  const dayMap = {};
+  entries.forEach(e => {
+    if (!dayMap[e.date]) dayMap[e.date] = { date: e.date, day: e.day, hours: 0, isLeave: false };
+    if (e.status === 'Leave') dayMap[e.date].isLeave = true;
+    else dayMap[e.date].hours += Number(e.hours) || 0;
+  });
+
+  const dayDetails = {};
+  entries.forEach(e => {
+    if (!dayDetails[e.date]) dayDetails[e.date] = { timeIns: [], timeOuts: [] };
+    if (e.timeIn)  dayDetails[e.date].timeIns.push(e.timeIn);
+    if (e.timeOut) dayDetails[e.date].timeOuts.push(e.timeOut);
+  });
+
+  const days = Object.values(dayMap).sort((a, b) => b.date.localeCompare(a.date)).map(d => ({
+    ...d,
+    checkIn:  (dayDetails[d.date]?.timeIns  || []).sort()[0]  || null,
+    checkOut: (dayDetails[d.date]?.timeOuts || []).sort().pop() || null,
+    hoursStr: fh(d.hours),
+  }));
+
+  const uniqueDays = new Set(worked.map(e => e.date)).size;
+
+  // "Current Month" is deliberately independent of fromDate/toDate —
+  // same as the backend, it always reflects the real current
+  // calendar month, computed from the FULL unfiltered dataset for
+  // this employee, not just whatever range is currently selected.
+  const nowMonth = todayStr().slice(0, 7);
+  const monthWorked = all.filter(e => e.date && e.date.startsWith(nowMonth) && e.status !== 'Leave');
+  const monthH    = monthWorked.reduce((s, e) => s + (Number(e.hours) || 0), 0);
+  const monthDays = new Set(monthWorked.map(e => e.date)).size;
+
+  const leaveDatesSet = [...new Set(leaves.map(e => e.date))].sort().reverse();
+  const leaveDates = leaveDatesSet.map(d => {
+    const dt = new Date(d + 'T00:00:00');
+    return { date: d, display: dt.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) };
+  });
+
+  return {
+    emp: { id: empId, name: empName },
+    entries,
+    summary: {
+      totalHours:    fh(totalH),
+      totalHoursRaw: totalH,
+      totalDays:     uniqueDays,
+      totalLeaves:   leaveDatesSet.length,
+      leaveDates,
+      totalEntries:  worked.length,
+      monthHours:    fh(monthH),
+      monthDays,
+      projects: Object.values(projMap).sort((a, b) => b.hours - a.hours).map(p => ({ ...p, hoursStr: fh(p.hours) })),
+      clients:  Object.values(cliMap).sort((a, b) => b.hours - a.hours).map(c => ({ ...c, hoursStr: fh(c.hours) })),
+      days,
+    },
+  };
+}
+
+// Bumped on every loadEmpDetail() call, and checked before the async
+// network-fallback path renders — prevents a slow Employee A request
+// from overwriting Employee B if the person clicks B before A's
+// (Manager/HR-only) request resolves. The local Team Leader path is
+// synchronous, so it can never suffer from this, but the guard costs
+// nothing to apply uniformly.
+let EMP_DETAIL_REQUEST_ID = 0;
+
 async function loadEmpDetail(fromDate, toDate) {
   const content = $('empDetailContent');
   if (!content) return;
 
+  // Team Leader: use the already-loaded bulk dataset (TL_DATA /
+  // TL_EMPLOYEE_INDEX from teamleader.js's single getTLData() call)
+  // instead of a network request — this is the entire point of the
+  // architecture change. Manager and HR are untouched: no equivalent
+  // bulk-loaded local dataset exists for them, so they keep using
+  // getEmployeeDetail exactly as before.
+  if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof TL_EMPLOYEE_INDEX !== 'undefined') {
+    const data = buildLocalEmpDetail(EMP_DETAIL_EMP.id, EMP_DETAIL_EMP.name, fromDate, toDate);
+    EMP_DETAIL_DATA = data;
+    renderEmpDetail(data);
+    return;
+  }
+
+  const requestId = ++EMP_DETAIL_REQUEST_ID;
   content.innerHTML = `<div class="mgr-loading"><div class="slot-spinner"></div><span>Loading…</span></div>`;
 
   try {
@@ -338,10 +482,12 @@ async function loadEmpDetail(fromDate, toDate) {
       from:   fromDate,
       to:     toDate,
     });
+    if (requestId !== EMP_DETAIL_REQUEST_ID) return; // a newer request (different employee/range) has already superseded this one
     EMP_DETAIL_DATA = data;
     renderEmpDetail(data);
   } catch(err) {
-    content.innerHTML = `<div class="slot-error">Failed to load: ${esc(err.message)}</div>`;
+    if (requestId !== EMP_DETAIL_REQUEST_ID) return;
+    content.innerHTML = `<div class="slot-error">Failed to load employee details: ${esc(err.message)}</div>`;
   }
 }
 
@@ -414,7 +560,7 @@ function renderEmpDetail(data) {
     if (btn) {
       if (btn.dataset.action === 'force_entry') {
         if (typeof openForceEntry === 'function') {
-          openForceEntry(empId, empName, btn.dataset.date, () => openEmpDetail(empId, empName));
+          openForceEntry(empId, empName, btn.dataset.date, () => refreshTLEmployeeThenOpenDetail(empId, empName));
         } else {
           toast?.('e', 'Force Entry unavailable', 'forceentry.js is not loaded on this page.');
         }
@@ -563,13 +709,21 @@ function shiftMonth(monthKey, delta) {
 }
 
 // Fetch (or reuse already-loaded) entries for a given month, without
-// requiring any new backend endpoint — reuses getEmployeeDetail.
+// requiring any new backend endpoint — reuses getEmployeeDetail as a
+// fallback. For Team Leader, TL_EMPLOYEE_INDEX is filtered locally
+// instead — same reasoning as loadEmpDetail() above: the bulk
+// getTLData() load already has everything, so no request is needed
+// for a month change either.
 async function getMonthEntries(monthKey) {
   const [y, m] = monthKey.split('-').map(Number);
   const from   = `${monthKey}-01`;
   const lastDay = new Date(y, m, 0).getDate();
   let to = `${monthKey}-${String(lastDay).padStart(2, '0')}`;
   if (to > todayStr()) to = todayStr();
+
+  if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof TL_EMPLOYEE_INDEX !== 'undefined') {
+    return (TL_EMPLOYEE_INDEX[EMP_DETAIL_EMP.id] || []).filter(e => e.date && e.date.startsWith(monthKey));
+  }
 
   const curFrom = $('empDetailFrom')?.value;
   const curTo   = $('empDetailTo')?.value;
@@ -788,6 +942,21 @@ function openResolutionModal(action, empId, empName, dateStr) {
       await apiSaveSlot(entry);
       toast?.('s', 'Recorded', `${t.title} saved for ${fmtDetailDate(dateStr)}.`);
       overlay.remove();
+
+      // Update TL_DATA locally instead of reloading the whole Team
+      // Leader dataset — same upsert pattern used elsewhere (Force
+      // Holiday, Biometric Punch in Client-Project-Attendance.js):
+      // remove any existing entry for this employee/date, push the
+      // fresh one, rebuild the index. The subsequent loadEmpDetail()
+      // call then reads this updated data locally with no request.
+      if (typeof TL_MODE !== 'undefined' && TL_MODE && typeof TL_DATA !== 'undefined' && Array.isArray(TL_DATA)) {
+        for (let i = TL_DATA.length - 1; i >= 0; i--) {
+          if (TL_DATA[i].empId === empId && TL_DATA[i].date === dateStr) TL_DATA.splice(i, 1);
+        }
+        TL_DATA.push({ ...entry, empId, empName, date: dateStr, hours: 0 });
+        if (typeof rebuildTLEmployeeIndex === 'function') rebuildTLEmployeeIndex();
+      }
+
       await loadEmpDetail($('empDetailFrom').value, $('empDetailTo').value);
     } catch(err) {
       submitBtn.disabled = false;

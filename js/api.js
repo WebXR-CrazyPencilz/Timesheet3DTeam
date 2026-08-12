@@ -27,7 +27,19 @@ const LS_E = 'tt_entries';
 // meaning those specific requests never reached Code.gs at all).
 // Back to 2 with no artificial gap: keeps the confirmed fix, drops
 // the speculative, costly one.
-const SHEET_MAX_CONCURRENT = 2;
+//
+// Raised from 2 to 4 — with 19 employees, Manager/TL/HR portals each
+// fire 19 parallel apiGetAllHistory() calls on load, and at
+// concurrency 2 that's ~10 sequential rounds through the queue,
+// which is most of what was making "Loading team data..." feel
+// endless. This is now safe to widen back up because failed
+// individual requests are no longer silently swallowed into missing
+// data (see manager.js/teamleader.js/humanresource.js's
+// results.filter(r => !r.ok) fix) — a failure now surfaces as a
+// visible warning instead of corrupting what's shown, so trading
+// back toward speed doesn't reintroduce the data-loss risk, just a
+// (now-visible) higher chance any one request needs its retry.
+const SHEET_MAX_CONCURRENT = 6;
 let sheetActiveCount = 0;
 const sheetQueue = [];
 
@@ -62,14 +74,53 @@ async function sheetGETInner(params, attempt = 1) {
   console.log('[API] GET →', params.action, attempt > 1 ? `(retry #${attempt})` : '');
 
   const controller = new AbortController();
+  // Per-action timeout — NOT one blanket value for every request.
+  // getTLData does fundamentally more work server-side than any other
+  // action: it loops EVERY employee's own sheet in a single Apps
+  // Script execution (this replaced the old architecture of 19
+  // separate, individually-fast getAllHistory() requests — see
+  // teamleader.js's initTeamLeader()). That consolidation was the
+  // right fix for the browser-side request-burst problem, but it
+  // means this one request can legitimately take much longer to
+  // finish executing than a normal single-employee call, with zero
+  // network issues involved at all. Giving it the same 12s as every
+  // lightweight action was the bug — the 12s reasoning below was
+  // written for "many small competing requests," which no longer
+  // describes this action after the getTLData consolidation.
+  const TIMEOUT_MS_BY_ACTION = {
+    getTLData: 60000, // loops every employee's sheet in one execution — needs real headroom
+    default:   12000,
+  };
+  const timeoutMs = TIMEOUT_MS_BY_ACTION[params.action] || TIMEOUT_MS_BY_ACTION.default;
   // 3 attempts x 25s (up to 75s worst case) was too slow in practice
   // — a genuine failure meant sitting through more than a minute
   // before finding out. Balanced back down: 18s per attempt, 2
   // attempts (one retry), 36s worst case — still noticeably more
   // forgiving than the original 15s/1-retry, without being painfully
   // slow on a real failure.
-  const timeout = setTimeout(() => controller.abort(), 18000);
-  const MAX_ATTEMPTS = 2;
+  //
+  // Further cut to 12s per attempt (24s worst case) for the general
+  // case — with up to 19 small requests firing per portal load
+  // (before the getTLData consolidation), a single slow request
+  // holding a slot for 18-36s was itself a bottleneck for everyone
+  // queued behind it. Failures are visible now (see the
+  // concurrency-limiter comment above), so failing faster and
+  // reporting it is a better trade than waiting longer per attempt —
+  // for everything EXCEPT the one action that genuinely needs more
+  // time, which now gets its own value above instead.
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  // getTLData gets 3 attempts instead of 2 — after consolidating 19
+  // separate requests into this one (see the timeout comment above),
+  // it became a single point of failure for the ENTIRE Team Leader
+  // portal: before, one employee's data failing left everyone else
+  // fine; now, if this one request fails twice, nothing loads at
+  // all. That trade-off earns it real retry headroom the way a
+  // lightweight per-slot action doesn't need.
+  const MAX_ATTEMPTS_BY_ACTION = {
+    getTLData: 3,
+    default:   2,
+  };
+  const MAX_ATTEMPTS = MAX_ATTEMPTS_BY_ACTION[params.action] || MAX_ATTEMPTS_BY_ACTION.default;
 
   try {
     const res  = await fetch(url.toString(), { signal: controller.signal });

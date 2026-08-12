@@ -50,63 +50,67 @@ async function initTeamLeader() {
   </div>`;
 
   try {
-    // Reuses the master data auth.js ALREADY fetched once during
-    // login (LIVE_EMPLOYEES/CLIENTS/PROJECTS) instead of calling
-    // apiGetMasterData() again from scratch — this is the exact same
-    // data (identical shape, identical source), so a second network
-    // round-trip here was pure waste. Also means one fewer request
-    // that can fail on a flaky connection. Falls back to a real
-    // fetch only if those globals are somehow still empty (e.g. this
-    // function got called before login finished, which shouldn't
-    // normally happen).
-    const master = (typeof LIVE_EMPLOYEES !== 'undefined' && LIVE_EMPLOYEES.length)
-      ? { employees: LIVE_EMPLOYEES, clients: (typeof CLIENTS !== 'undefined' ? CLIENTS : []), projects: (typeof PROJECTS !== 'undefined' ? PROJECTS : []) }
-      : await apiGetMasterData();
-    TL_EMPLOYEES = master.employees || [];
-    TL_CLIENTS   = master.clients   || [];
-    TL_PROJECTS  = master.projects  || [];
+    // ── SINGLE BULK REQUEST ──────────────────────────
+    // Replaces the old N-request architecture (19 separate
+    // apiGetAllHistory() calls via Promise.all, one per employee —
+    // the actual root cause of the slow/failing loads, since more
+    // concurrency or longer timeouts just meant more simultaneous
+    // requests that could each fail on a flaky connection) with the
+    // existing backend action getTLData(), which already loops every
+    // employee sheet server-side and returns one combined payload:
+    // { employees, clients, projects, entries }. This single call
+    // also replaces the earlier separate getMasterData() (whether
+    // fresh or reused from auth.js's LIVE_EMPLOYEES) — getTLData()
+    // already includes employees/clients/projects itself, so a
+    // second source for the same data would just be redundant.
+    const data = await sheetGET({ action: 'getTLData' });
 
-    // Forward master data to client-project.js — without this, its
-    // Project/Client cards can't resolve employee names or populate
-    // the Team Hours / candle charts (CP_EMPLOYEES / CP_TIMESHEET_DATA
-    // are only ever set via these two calls, same as manager.js).
+    TL_EMPLOYEES = data.employees || [];
+    TL_CLIENTS   = data.clients   || [];
+    TL_PROJECTS  = data.projects  || [];
+    TL_DATA      = data.entries   || [];
+
+    // Lightweight in-memory index so Employee Detail (and anything
+    // else that needs "this one employee's entries") never has to
+    // re-scan the full TL_DATA array — see emp-detail.js's use of
+    // this for the local (no-network) detail path.
+    rebuildTLEmployeeIndex();
+
+    // Forward to client-project.js — without this, its Project/Client
+    // cards can't resolve employee names or populate the Team Hours /
+    // candle charts (CP_EMPLOYEES / CP_TIMESHEET_DATA are only ever
+    // set via these two calls, same as manager.js).
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestMasterData === 'function') {
-      ClientProjectAPI.ingestMasterData(master);
+      ClientProjectAPI.ingestMasterData({ employees: TL_EMPLOYEES, clients: TL_CLIENTS, projects: TL_PROJECTS });
     }
-
-    // Each employee's history is fetched independently and tagged
-    // with whether it actually succeeded — NOT silently swallowed to
-    // an empty array on failure. That used to mean a single flaky
-    // request for one employee (out of up to 19 firing in parallel)
-    // made their real timesheet data vanish from every view with no
-    // error, no warning — indistinguishable from that employee
-    // genuinely having no entries, when the data was sitting right
-    // there in their sheet the whole time. Now a failure is visible
-    // and the person knows to retry instead of silently working from
-    // wrong data.
-    const results = await Promise.all(
-      TL_EMPLOYEES.map(emp =>
-        apiGetAllHistory(emp.id)
-          .then(entries => ({ ok: true, empName: emp.name, entries: entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })) }))
-          .catch(err => ({ ok: false, empName: emp.name, error: err.message, entries: [] }))
-      )
-    );
-    const failed = results.filter(r => !r.ok);
-    TL_DATA = results.flatMap(r => r.entries);
-
-    if (failed.length) {
-      toast?.('e', `Couldn't load ${failed.length} employee${failed.length > 1 ? "s'" : "'s"} timesheet data`,
-        `${failed.map(f => f.empName).join(', ')} — their hours may show as missing below. Reload to retry.`, 12000);
-    }
-
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestTimesheetData === 'function') {
       ClientProjectAPI.ingestTimesheetData(TL_DATA);
     }
 
     renderTLPortal();
   } catch(err) {
-    container.innerHTML = `<div class="slot-error">Failed to load: ${err.message}</div>`;
+    // A real bulk-request failure is shown honestly, not silently
+    // converted into empty/zero data for every employee — an empty
+    // TL_DATA should only ever mean "genuinely no entries exist",
+    // never "the request failed".
+    container.innerHTML = `<div class="slot-error">Failed to load Team Leader data: ${esc(err.message)}
+      <br/><button class="btn bghost" style="margin-top:.75rem" onclick="initTeamLeader()">↻ Retry</button></div>`;
   }
+}
+
+// Rebuilt every time TL_DATA changes (initial bulk load, or a
+// targeted update after a manual save — see wireEmpDetailManualSave
+// in emp-detail.js). Employee Detail filters this instead of
+// scanning the full TL_DATA array on every open/date-range/month
+// change, and — more importantly — instead of making a network
+// request the way it used to.
+let TL_EMPLOYEE_INDEX = {};
+function rebuildTLEmployeeIndex() {
+  TL_EMPLOYEE_INDEX = {};
+  (TL_DATA || []).forEach(e => {
+    if (!TL_EMPLOYEE_INDEX[e.empId]) TL_EMPLOYEE_INDEX[e.empId] = [];
+    TL_EMPLOYEE_INDEX[e.empId].push(e);
+  });
 }
 
 // ── RENDER PORTAL SHELL ───────────────────────────
