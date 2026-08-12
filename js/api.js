@@ -17,7 +17,16 @@ const LS_E = 'tt_entries';
 // works fine. Capping actual in-flight requests to 2 and queuing the
 // rest fixes this at the one shared choke point (sheetGET) instead
 // of having to coordinate every caller across the app.
-const SHEET_MAX_CONCURRENT = 2;
+// Dropped from 2 to 1 — Apps Script's Executions log showed ZERO
+// failed doGet runs matching the actual timeouts users hit, meaning
+// those requests never reached Code.gs at all; the failure is
+// happening between the browser and Apps Script starting execution,
+// consistent with the redirect-token issue even at a concurrency of
+// 2. Fully serializing (never more than 1 request in flight at a
+// time) is the safest fix — page loads take a bit longer since
+// nothing runs in parallel anymore, but this removes the burst
+// entirely rather than just reducing it.
+const SHEET_MAX_CONCURRENT = 1;
 let sheetActiveCount = 0;
 const sheetQueue = [];
 
