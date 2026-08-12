@@ -650,6 +650,10 @@ function renderHRAddEmployeeTab(content) {
       const newEmp = { id, name, team, pw };
       HR_EMPLOYEES.push(newEmp);
       if (typeof CP_EMPLOYEES !== 'undefined') CP_EMPLOYEES.push(newEmp);
+      // Employees list just changed — clear the cached getMasterData
+      // response so the next load (any portal) picks up the new
+      // employee instead of serving a stale cached list.
+      if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
 
       toast('s', 'Employee created', `${name} (${id}) can now log in.`);
       renderHRAddEmployeeTab($('hrTabContent')); // reset form, next suggested ID
@@ -754,6 +758,9 @@ function renderHRManageEmployeesTab(content) {
           localEmp.extendedDaysBack = parseInt(extendedDaysBack, 10) || 0;
           if (result.name) localEmp.name = result.name;
         }
+        // Employee record just changed — clear the cached
+        // getMasterData response, same reasoning as createEmployee.
+        if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
 
         toast('s', 'Employee updated', `${originalName} · ${status === 'Active' ? 'Active' : 'In-Active'}`);
         renderHRManageEmployeesTab($('hrTabContent'));

@@ -803,6 +803,10 @@ function openClientEditor(content, client = null, onDone = null) {
         await sheetGET({ action: 'updateClientMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, id: client.id, name })) });
         toast?.('s', 'Client updated', name);
       }
+      // Clients are part of the cached getMasterData response —
+      // clear it so the next load (any portal) sees this change
+      // instead of a stale cached list.
+      if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
       overlay.remove();
       await loadClientData();
       refresh();
@@ -817,6 +821,7 @@ function openClientEditor(content, client = null, onDone = null) {
     try {
       await sheetGET({ action: 'deleteClientMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, id: client.id })) });
       toast?.('s', 'Client deleted', client.name);
+      if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
       overlay.remove();
       await loadClientData();
       refresh();
@@ -1718,6 +1723,10 @@ async function saveProjectFromForm(content, isNew, originalProject, onDone) {
   try {
     await sheetGET({ action: 'saveProjectMaster', data: encodeURIComponent(JSON.stringify(payload)) });
     toast?.('s', isNew ? 'Project created' : 'Project updated', payload.projectName || originalProject.projectName || originalProject.projectId);
+    // Projects are part of the cached getMasterData response — clear
+    // it so the next load (any portal) sees this change instead of a
+    // stale cached list.
+    if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
     await loadProjectData();
     if (typeof onDone === 'function') onDone(); else renderProjectList(content);
   } catch(err) {
@@ -1732,6 +1741,7 @@ async function deleteProjectFromForm(content, project, onDone) {
   try {
     await sheetGET({ action: 'deleteProjectMaster', data: encodeURIComponent(JSON.stringify({ role: CP_ROLE, projectId: project.projectId })) });
     toast?.('s', 'Project deleted', project.projectName || project.projectId);
+    if (typeof clearMasterDataCache === 'function') clearMasterDataCache();
     await loadProjectData();
     if (typeof onDone === 'function') onDone(); else renderProjectList(content);
   } catch(err) {

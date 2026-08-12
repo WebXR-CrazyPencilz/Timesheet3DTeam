@@ -166,12 +166,62 @@ async function sheetGETInner(params, attempt = 1) {
   }
 }
 
-// ── MASTER DATA ───────────────────────────────────
+// ── MASTER DATA (cached) ───────────────────────────
+// Employees/clients/projects rarely change during a day, but every
+// portal (Employee, Manager, TL, HR) independently called
+// getMasterData() on its own load — with ~24 accounts (20 employees
+// + HR + Manager + 2 TLs), that's a wave of identical, redundant
+// requests hitting Apps Script's shared execution slot pool at the
+// same moments (e.g. morning clock-in), on top of everything else
+// each portal needs. A simple sessionStorage cache removes that
+// duplication with no new moving parts — no timers, no background
+// refresh, just "check cache, else fetch and store."
+const MASTER_DATA_CACHE_KEY = 'timesheet_master_data_v1';
+const MASTER_DATA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 async function apiGetMasterData() {
   if (CONFIG.DEMO_MODE) {
     return { employees: EMPLOYEES, clients: CLIENTS, projects: PROJECTS };
   }
-  return sheetGET({ action: 'getMasterData' });
+
+  const cached = readMasterDataCache();
+  if (cached) return cached;
+
+  const data = await sheetGET({ action: 'getMasterData' });
+  writeMasterDataCache(data);
+  return data;
+}
+
+function readMasterDataCache() {
+  try {
+    const raw = sessionStorage.getItem(MASTER_DATA_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.data || typeof parsed.timestamp !== 'number') return null;
+    if (Date.now() - parsed.timestamp >= MASTER_DATA_CACHE_TTL_MS) {
+      sessionStorage.removeItem(MASTER_DATA_CACHE_KEY);
+      return null;
+    }
+    return parsed.data;
+  } catch(e) {
+    return null;
+  }
+}
+
+function writeMasterDataCache(data) {
+  try {
+    sessionStorage.setItem(MASTER_DATA_CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch(e) {
+    // sessionStorage unavailable/full — not fatal, just means no caching this time
+  }
+}
+
+// Called after any action that changes employees/clients/projects
+// (createEmployee, updateEmployeeRecord, client/project master
+// create-update-delete) — NOT after normal timesheet entry saves,
+// which don't touch this data at all.
+function clearMasterDataCache() {
+  try { sessionStorage.removeItem(MASTER_DATA_CACHE_KEY); } catch(e) {}
 }
 
 // ── AUTH ──────────────────────────────────────────
