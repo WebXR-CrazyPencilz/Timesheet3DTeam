@@ -4,8 +4,48 @@
 
 const LS_E = 'tt_entries';
 
+// ── CONCURRENCY LIMITER ────────────────────────────
+// Apps Script's /exec endpoint responds with a redirect to a
+// short-lived script.googleusercontent.com URL. Under a burst of
+// several requests firing at once (very common here — a page/day
+// load often kicks off getMasterData + getHistory + getDaySlots +
+// getAllHistory together, each from a different init function that
+// has no idea the others exist), some of those redirect tokens seem
+// to expire before the browser gets to use them, surfacing as a 404
+// on that googleusercontent URL specifically — never on the /exec
+// deployment URL itself, which is why hitting it directly always
+// works fine. Capping actual in-flight requests to 2 and queuing the
+// rest fixes this at the one shared choke point (sheetGET) instead
+// of having to coordinate every caller across the app.
+const SHEET_MAX_CONCURRENT = 2;
+let sheetActiveCount = 0;
+const sheetQueue = [];
+
+function sheetAcquireSlot() {
+  if (sheetActiveCount < SHEET_MAX_CONCURRENT) {
+    sheetActiveCount++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => sheetQueue.push(resolve));
+}
+
+function sheetReleaseSlot() {
+  const next = sheetQueue.shift();
+  if (next) next(); // hand the slot straight to the next queued call
+  else sheetActiveCount--;
+}
+
 // ── SHARED GET HELPER (with timeout + retry) ───────
 async function sheetGET(params, attempt = 1) {
+  await sheetAcquireSlot();
+  try {
+    return await sheetGETInner(params, attempt);
+  } finally {
+    sheetReleaseSlot();
+  }
+}
+
+async function sheetGETInner(params, attempt = 1) {
   const url = new URL(CONFIG.SHEETS_URL);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
@@ -52,7 +92,11 @@ async function sheetGET(params, attempt = 1) {
     const isTimeoutOrNetwork = err.name === 'AbortError' || err.message.includes('fetch') || err.message.includes('Non-JSON response');
     if (attempt < MAX_ATTEMPTS && isTimeoutOrNetwork) {
       console.warn('[API] Timeout/network error on', params.action, '— retrying...');
-      return sheetGET(params, attempt + 1);
+      // Calls sheetGETInner directly, NOT the sheetGET wrapper above —
+      // a retry must reuse the concurrency slot it's already holding,
+      // not queue up for a second one while blocking release of the
+      // first (which could deadlock once enough retries stack up).
+      return sheetGETInner(params, attempt + 1);
     }
     // Replace the raw AbortError message ("signal is aborted without
     // reason") with something a person can actually act on, after
