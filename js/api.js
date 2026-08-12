@@ -38,10 +38,20 @@ function sheetAcquireSlot() {
   return new Promise(resolve => sheetQueue.push(resolve));
 }
 
+// Minimum gap enforced between the END of one request and the START
+// of the next, even at concurrency 1 — in case the real cause is a
+// rapid-fire rate limit (Google silently throttling requests that
+// arrive back-to-back with zero spacing) rather than pure overlap.
+// Cheap to add, and directly tests a hypothesis the concurrency fix
+// alone couldn't rule out.
+const SHEET_MIN_GAP_MS = 400;
+
 function sheetReleaseSlot() {
-  const next = sheetQueue.shift();
-  if (next) next(); // hand the slot straight to the next queued call
-  else sheetActiveCount--;
+  setTimeout(() => {
+    const next = sheetQueue.shift();
+    if (next) next(); // hand the slot to the next queued call, after the gap
+    else sheetActiveCount--;
+  }, SHEET_MIN_GAP_MS);
 }
 
 // ── SHARED GET HELPER (with timeout + retry) ───────
