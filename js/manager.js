@@ -72,15 +72,27 @@ async function initManager() {
       ClientProjectAPI.ingestMasterData(master);
     }
 
-    // Load all employee entries in parallel
+    // Each employee's history is fetched independently and tagged
+    // with whether it actually succeeded — NOT silently swallowed to
+    // an empty array on failure. See teamleader.js's identical fix
+    // for the full reasoning: a single flaky request out of up to 19
+    // firing in parallel used to make that employee's real timesheet
+    // data vanish everywhere with no warning at all — indistinguishable
+    // from them genuinely having no entries.
     const results = await Promise.all(
       MGR_EMPLOYEES.map(emp =>
         apiGetAllHistory(emp.id)
-          .then(entries => entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })))
-          .catch(() => [])
+          .then(entries => ({ ok: true, empName: emp.name, entries: entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })) }))
+          .catch(err => ({ ok: false, empName: emp.name, error: err.message, entries: [] }))
       )
     );
-    MGR_DATA = results.flat();
+    const failed = results.filter(r => !r.ok);
+    MGR_DATA = results.flatMap(r => r.entries);
+
+    if (failed.length) {
+      toast?.('e', `Couldn't load ${failed.length} employee${failed.length > 1 ? "s'" : "'s"} timesheet data`,
+        `${failed.map(f => f.empName).join(', ')} — their hours may show as missing below. Reload to retry.`, 12000);
+    }
 
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestTimesheetData === 'function') {
       ClientProjectAPI.ingestTimesheetData(MGR_DATA);

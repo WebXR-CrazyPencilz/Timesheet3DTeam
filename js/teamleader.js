@@ -74,14 +74,30 @@ async function initTeamLeader() {
       ClientProjectAPI.ingestMasterData(master);
     }
 
+    // Each employee's history is fetched independently and tagged
+    // with whether it actually succeeded — NOT silently swallowed to
+    // an empty array on failure. That used to mean a single flaky
+    // request for one employee (out of up to 19 firing in parallel)
+    // made their real timesheet data vanish from every view with no
+    // error, no warning — indistinguishable from that employee
+    // genuinely having no entries, when the data was sitting right
+    // there in their sheet the whole time. Now a failure is visible
+    // and the person knows to retry instead of silently working from
+    // wrong data.
     const results = await Promise.all(
       TL_EMPLOYEES.map(emp =>
         apiGetAllHistory(emp.id)
-          .then(entries => entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })))
-          .catch(() => [])
+          .then(entries => ({ ok: true, empName: emp.name, entries: entries.map(e => ({ ...e, empId: emp.id, empName: emp.name, empTeam: emp.team })) }))
+          .catch(err => ({ ok: false, empName: emp.name, error: err.message, entries: [] }))
       )
     );
-    TL_DATA = results.flat();
+    const failed = results.filter(r => !r.ok);
+    TL_DATA = results.flatMap(r => r.entries);
+
+    if (failed.length) {
+      toast?.('e', `Couldn't load ${failed.length} employee${failed.length > 1 ? "s'" : "'s"} timesheet data`,
+        `${failed.map(f => f.empName).join(', ')} — their hours may show as missing below. Reload to retry.`, 12000);
+    }
 
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestTimesheetData === 'function') {
       ClientProjectAPI.ingestTimesheetData(TL_DATA);
