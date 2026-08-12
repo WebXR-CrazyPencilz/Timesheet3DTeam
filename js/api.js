@@ -27,13 +27,29 @@ async function sheetGET(params, attempt = 1) {
   try {
     const res  = await fetch(url.toString(), { signal: controller.signal });
     clearTimeout(timeout);
-    const json = await res.json();
+
+    let json;
+    try {
+      json = await res.json();
+    } catch (parseErr) {
+      // The response wasn't valid JSON at all — usually an HTML
+      // error page (a 404/5xx from Apps Script's own infrastructure,
+      // most often seen when several requests fire at once, e.g. a
+      // page load kicking off getMasterData + getHistory + getDaySlots
+      // together and one gets a transient rejection). This is a
+      // server-side hiccup, not a real script error — treat it as
+      // retryable the same as a timeout, rather than letting the
+      // SyntaxError from a failed JSON.parse crash straight through
+      // uncaught.
+      throw new Error('Non-JSON response (HTTP ' + res.status + ') — likely a transient server error.');
+    }
+
     console.log('[API] ←', params.action, '| status:', json.status);
     if (json.status !== 'ok') throw new Error(json.message || 'Request failed');
     return json.data;
   } catch(err) {
     clearTimeout(timeout);
-    const isTimeoutOrNetwork = err.name === 'AbortError' || err.message.includes('fetch');
+    const isTimeoutOrNetwork = err.name === 'AbortError' || err.message.includes('fetch') || err.message.includes('Non-JSON response');
     if (attempt < MAX_ATTEMPTS && isTimeoutOrNetwork) {
       console.warn('[API] Timeout/network error on', params.action, '— retrying...');
       return sheetGET(params, attempt + 1);
