@@ -14,19 +14,20 @@ const LS_E = 'tt_entries';
 // to expire before the browser gets to use them, surfacing as a 404
 // on that googleusercontent URL specifically — never on the /exec
 // deployment URL itself, which is why hitting it directly always
-// works fine. Capping actual in-flight requests to 2 and queuing the
-// rest fixes this at the one shared choke point (sheetGET) instead
-// of having to coordinate every caller across the app.
-// Dropped from 2 to 1 — Apps Script's Executions log showed ZERO
-// failed doGet runs matching the actual timeouts users hit, meaning
-// those requests never reached Code.gs at all; the failure is
-// happening between the browser and Apps Script starting execution,
-// consistent with the redirect-token issue even at a concurrency of
-// 2. Fully serializing (never more than 1 request in flight at a
-// time) is the safest fix — page loads take a bit longer since
-// nothing runs in parallel anymore, but this removes the burst
-// entirely rather than just reducing it.
-const SHEET_MAX_CONCURRENT = 1;
+// works fine. Capping actual in-flight requests and queuing the rest
+// fixes this at the one shared choke point (sheetGET) instead of
+// having to coordinate every caller across the app.
+//
+// Was briefly dropped to 1 + a mandatory 400ms gap between requests,
+// to test whether the failures were a rate-limit rather than pure
+// overlap — but that made every page load noticeably slower for
+// everyone, and the rate-limit hypothesis was never actually
+// confirmed (unlike the burst/redirect-token cause above, which the
+// Executions log did confirm — zero matching doGet failures logged,
+// meaning those specific requests never reached Code.gs at all).
+// Back to 2 with no artificial gap: keeps the confirmed fix, drops
+// the speculative, costly one.
+const SHEET_MAX_CONCURRENT = 2;
 let sheetActiveCount = 0;
 const sheetQueue = [];
 
@@ -38,20 +39,10 @@ function sheetAcquireSlot() {
   return new Promise(resolve => sheetQueue.push(resolve));
 }
 
-// Minimum gap enforced between the END of one request and the START
-// of the next, even at concurrency 1 — in case the real cause is a
-// rapid-fire rate limit (Google silently throttling requests that
-// arrive back-to-back with zero spacing) rather than pure overlap.
-// Cheap to add, and directly tests a hypothesis the concurrency fix
-// alone couldn't rule out.
-const SHEET_MIN_GAP_MS = 400;
-
 function sheetReleaseSlot() {
-  setTimeout(() => {
-    const next = sheetQueue.shift();
-    if (next) next(); // hand the slot to the next queued call, after the gap
-    else sheetActiveCount--;
-  }, SHEET_MIN_GAP_MS);
+  const next = sheetQueue.shift();
+  if (next) next(); // hand the slot straight to the next queued call
+  else sheetActiveCount--;
 }
 
 // ── SHARED GET HELPER (with timeout + retry) ───────
@@ -71,17 +62,14 @@ async function sheetGETInner(params, attempt = 1) {
   console.log('[API] GET →', params.action, attempt > 1 ? `(retry #${attempt})` : '');
 
   const controller = new AbortController();
-  // Apps Script cold starts / a busy spreadsheet can genuinely take
-  // longer than a typical API call — 15s was tight enough that two
-  // consecutive slow (but real) responses in a row could exhaust
-  // both attempts and surface as a raw "signal is aborted without
-  // reason" error to the person, which reads like a crash rather
-  // than "the server was just slow, please wait." Timeout raised to
-  // 25s, and MAX_ATTEMPTS raised from 2 to 3 (two retries instead of
-  // one) — each attempt has a real chance to succeed instead of
-  // giving up after a single retry.
-  const timeout = setTimeout(() => controller.abort(), 25000);
-  const MAX_ATTEMPTS = 3;
+  // 3 attempts x 25s (up to 75s worst case) was too slow in practice
+  // — a genuine failure meant sitting through more than a minute
+  // before finding out. Balanced back down: 18s per attempt, 2
+  // attempts (one retry), 36s worst case — still noticeably more
+  // forgiving than the original 15s/1-retry, without being painfully
+  // slow on a real failure.
+  const timeout = setTimeout(() => controller.abort(), 18000);
+  const MAX_ATTEMPTS = 2;
 
   try {
     const res  = await fetch(url.toString(), { signal: controller.signal });
