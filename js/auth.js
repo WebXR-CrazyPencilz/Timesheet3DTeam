@@ -224,14 +224,31 @@ async function loginAs(emp, silent = false) {
   $('tlPortal')?.classList.remove('on');
   $('app').classList.add('on');
 
-  ENTRIES = await apiLoadEntries(emp.id);
-  initForm();
-  refreshStats();
-  refreshFilters();
-  refreshTable();
-  refreshChart();
-
-  if (!silent) toast('s', `Welcome back, ${emp.name.split(' ')[0]}! 👋`, emp.team);
+  // Data load is wrapped separately from the UI-switch above — a
+  // failure here must not leave the app shell stuck silently. Before
+  // this fix, apiLoadEntries had no try/catch here, so a flaky-network
+  // throw became an unhandled promise rejection with zero UI feedback
+  // — indistinguishable from an infinite load. Same recovery pattern
+  // as initTeamLeader()'s catch block in teamleader.js.
+  try {
+    ENTRIES = await apiLoadEntries(emp.id);
+    initForm();
+    refreshStats();
+    refreshFilters();
+    refreshTable();
+    refreshChart();
+    if (!silent) toast('s', `Welcome back, ${emp.name.split(' ')[0]}! 👋`, emp.team);
+  } catch(err) {
+    console.error('[AUTH] Failed to load entries for', emp.id, ':', err.message);
+    toast('e', 'Could not load your timesheet', err.message, 8000);
+    const appEl = $('app');
+    if (appEl) {
+      appEl.innerHTML = `<div class="slot-error" style="margin:2rem auto;max-width:420px;text-align:center;">
+        Failed to load your timesheet: ${esc(err.message)}
+        <br/><button class="btn bghost" style="margin-top:.75rem" onclick='loginAs(${JSON.stringify(emp)}, true)'>↻ Retry</button>
+      </div>`;
+    }
+  }
 }
 
 // ── MANAGER LOGIN ─────────────────────────────────
