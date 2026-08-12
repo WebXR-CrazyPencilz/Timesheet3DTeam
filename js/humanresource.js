@@ -38,7 +38,16 @@ async function initHR() {
   </div>`;
 
   try {
-    const master = await apiGetMasterData();
+    // Reuses the master data auth.js ALREADY fetched once during
+    // login (LIVE_EMPLOYEES/CLIENTS/PROJECTS) instead of calling
+    // apiGetMasterData() again from scratch — same reasoning as
+    // manager.js's/teamleader.js's identical fix: one fewer redundant
+    // round-trip, one fewer chance to fail on a flaky connection.
+    // Falls back to a real fetch only if those globals are somehow
+    // still empty.
+    const master = (typeof LIVE_EMPLOYEES !== 'undefined' && LIVE_EMPLOYEES.length)
+      ? { employees: LIVE_EMPLOYEES, clients: (typeof CLIENTS !== 'undefined' ? CLIENTS : []), projects: (typeof PROJECTS !== 'undefined' ? PROJECTS : []) }
+      : await apiGetMasterData();
     HR_EMPLOYEES = master.employees || [];
 
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestMasterData === 'function') {

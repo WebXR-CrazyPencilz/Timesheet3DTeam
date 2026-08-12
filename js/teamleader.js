@@ -50,7 +50,18 @@ async function initTeamLeader() {
   </div>`;
 
   try {
-    const master = await apiGetMasterData();
+    // Reuses the master data auth.js ALREADY fetched once during
+    // login (LIVE_EMPLOYEES/CLIENTS/PROJECTS) instead of calling
+    // apiGetMasterData() again from scratch — this is the exact same
+    // data (identical shape, identical source), so a second network
+    // round-trip here was pure waste. Also means one fewer request
+    // that can fail on a flaky connection. Falls back to a real
+    // fetch only if those globals are somehow still empty (e.g. this
+    // function got called before login finished, which shouldn't
+    // normally happen).
+    const master = (typeof LIVE_EMPLOYEES !== 'undefined' && LIVE_EMPLOYEES.length)
+      ? { employees: LIVE_EMPLOYEES, clients: (typeof CLIENTS !== 'undefined' ? CLIENTS : []), projects: (typeof PROJECTS !== 'undefined' ? PROJECTS : []) }
+      : await apiGetMasterData();
     TL_EMPLOYEES = master.employees || [];
     TL_CLIENTS   = master.clients   || [];
     TL_PROJECTS  = master.projects  || [];
@@ -593,7 +604,7 @@ function toLocalDateStr(d) {
 // neither Leave nor Holiday. Filters checking `status !== 'Leave'`
 // alone let Holiday entries through as if they were worked days
 // (0 hours, but still inflating "Days" totals).
-function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday' && e.status !== 'BiometricPunch'; }
+function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday'; }
 
 function tlCalcHours(arr) { return arr.filter(isWorkedEntry).reduce((s,e)=>s+tlParseH(e.hours),0); }
 

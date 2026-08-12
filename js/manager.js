@@ -56,7 +56,16 @@ async function initManager() {
     // Load master data once. Only the employees portion is this
     // file's concern — clients/projects are handed off wholesale to
     // client-project.js, which owns everything about them.
-    const master = await apiGetMasterData();
+    // Reuses the master data auth.js ALREADY fetched once during
+    // login (LIVE_EMPLOYEES/CLIENTS/PROJECTS) instead of calling
+    // apiGetMasterData() again from scratch — same reasoning as
+    // teamleader.js's/humanresource.js's identical fix: one fewer
+    // redundant round-trip, one fewer chance to fail on a flaky
+    // connection. Falls back to a real fetch only if those globals
+    // are somehow still empty.
+    const master = (typeof LIVE_EMPLOYEES !== 'undefined' && LIVE_EMPLOYEES.length)
+      ? { employees: LIVE_EMPLOYEES, clients: (typeof CLIENTS !== 'undefined' ? CLIENTS : []), projects: (typeof PROJECTS !== 'undefined' ? PROJECTS : []) }
+      : await apiGetMasterData();
     MGR_EMPLOYEES = master.employees || [];
 
     if (typeof ClientProjectAPI !== 'undefined' && typeof ClientProjectAPI.ingestMasterData === 'function') {
@@ -560,7 +569,7 @@ function toLocalDateStr(d) {
 // entries slip through as if they were worked days (with 0 hours,
 // but still counted toward "Days" totals) — Holiday needs the same
 // exclusion Leave already gets, everywhere "worked" is computed.
-function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday' && e.status !== 'BiometricPunch'; }
+function isWorkedEntry(e) { return e.status !== 'Leave' && e.status !== 'Holiday'; }
 
 function calcHours(arr) { return arr.filter(isWorkedEntry).reduce((s,e)=>s+parseH(e.hours),0); }
 
